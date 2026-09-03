@@ -1,6 +1,8 @@
 // Copyright (c) 2015-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import React from 'react';
+
 import manifest from 'manifest';
 import type {Store} from 'redux';
 
@@ -8,10 +10,31 @@ import type {GlobalState} from '@mattermost/types/store';
 
 import type {PluginRegistry} from 'types/mattermost-webapp';
 
+import Sidebar from './components/sidebar';
+
+/** ClockIcon is the channel header button that opens the sidebar. */
+function ClockIcon() {
+    return (
+        <i
+            className='icon icon-clock-outline'
+            aria-hidden='true'
+        />
+    );
+}
+
 export default class Plugin {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars, @typescript-eslint/no-empty-function
     public async initialize(registry: PluginRegistry, store: Store<GlobalState>) {
-        // @see https://developers.mattermost.com/extend/plugins/webapp/reference/
+        const {toggleRHSPlugin} = registry.registerRightHandSidebarComponent(
+            Sidebar,
+            'Recurring Reminders',
+        );
+
+        registry.registerChannelHeaderButtonAction(
+            <ClockIcon/>,
+            () => store.dispatch(toggleRHSPlugin),
+            'Recurring Reminders',
+            'Recurring Reminders',
+        );
     }
 }
 

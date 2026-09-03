@@ -16,6 +16,9 @@ func (p *Plugin) initRouter() *mux.Router {
 
 	api := router.PathPrefix("/api/v1").Subrouter()
 
+	// Read by the right-hand sidebar.
+	api.HandleFunc("/reminders", p.handleGetReminders).Methods(http.MethodGet)
+
 	// Buttons on a delivered reminder post back here. Mattermost forwards the
 	// pressing user in Mattermost-User-ID, which the middleware above requires,
 	// and each handler scopes its lookup to that user's own reminders.
