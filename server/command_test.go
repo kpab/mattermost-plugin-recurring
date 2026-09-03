@@ -142,3 +142,11 @@ func TestFormatRunAt(t *testing.T) {
 		assert.Contains(t, p.formatRunAt(at(3*time.Hour)), "JST")
 	})
 }
+
+// The server validates autocomplete data when the command is registered, and a
+// rejection fails OnActivate — the plugin does not start at all. That is how
+// this shipped broken once: the root node carried both a text argument and
+// subcommands, which Mattermost refuses, and nothing here called the builder.
+func TestAutocompleteDataIsValid(t *testing.T) {
+	assert.NoError(t, buildAutocomplete().IsValid())
+}

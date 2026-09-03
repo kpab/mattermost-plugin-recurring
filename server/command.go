@@ -34,10 +34,16 @@ Japanese input works too:
 * ` + "`/recurring 毎週月曜 10:00 週次報告`" + `
 _(replies are in English for now)_`
 
-// registerCommand tells the server about /recurring.
-func (p *Plugin) registerCommand() error {
+// buildAutocomplete describes /recurring to the autocomplete UI.
+//
+// The root carries subcommands only. Mattermost rejects a definition that has
+// both arguments and subcommands on the same node — and rejects it by failing
+// command registration, which fails OnActivate, which stops the plugin from
+// starting at all. Creating a reminder therefore has no argument hint here; it
+// is whatever does not match a subcommand, and the hint on the Command itself
+// carries the example.
+func buildAutocomplete() *model.AutocompleteData {
 	autocomplete := model.NewAutocompleteData(commandTrigger, "[when] [message]", "Set a reminder that repeats")
-	autocomplete.AddTextArgument("e.g. every monday at 10:00 weekly report", "[when] [message]", "")
 
 	autocomplete.AddCommand(model.NewAutocompleteData("list", "", "Show your reminders"))
 
@@ -55,12 +61,17 @@ func (p *Plugin) registerCommand() error {
 
 	autocomplete.AddCommand(model.NewAutocompleteData("help", "", "Show help"))
 
+	return autocomplete
+}
+
+// registerCommand tells the server about /recurring.
+func (p *Plugin) registerCommand() error {
 	if err := p.client.SlashCommand.Register(&model.Command{
 		Trigger:          commandTrigger,
 		AutoComplete:     true,
-		AutoCompleteDesc: "Set a reminder that repeats",
-		AutoCompleteHint: "[when] [message]",
-		AutocompleteData: autocomplete,
+		AutoCompleteDesc: "Set a reminder that repeats — daily, weekly, or monthly",
+		AutoCompleteHint: "daily 9:00 stand-up",
+		AutocompleteData: buildAutocomplete(),
 	}); err != nil {
 		return errors.Wrap(err, "failed to register the /recurring command")
 	}
