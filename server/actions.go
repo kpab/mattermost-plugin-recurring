@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -45,7 +46,11 @@ func (p *Plugin) reminderActions(r *reminder.Reminder) []*model.PostAction {
 
 	for _, option := range snoozeOptions {
 		actions = append(actions, &model.PostAction{
-			Id:   "snooze_" + option.Label,
+			// Mattermost puts this ID straight into the callback path
+			// (/api/v4/posts/<id>/actions/<action id>), so it has to be
+			// URL-safe. Building it from the label put a space in it and every
+			// press 404'd.
+			Id:   fmt.Sprintf("snooze_%dm", option.Minutes),
 			Type: model.PostActionTypeButton,
 			Name: "Snooze " + option.Label,
 			Integration: &model.PostActionIntegration{

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -177,5 +178,36 @@ func TestReminderActionsPointAtRegisteredRoutes(t *testing.T) {
 
 		assert.NotEqual(t, http.StatusNotFound, w.Code,
 			"button %q posts to %s, which no route handles", action.Name, action.Integration.URL)
+	}
+}
+
+// Mattermost calls back on /api/v4/posts/<post id>/actions/<action id>, so an
+// action ID containing anything that changes under URL encoding makes the
+// button 404. Building one from a human-readable label put a space in it.
+func TestActionIDsAreURLSafe(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
+
+	for _, action := range tp.reminderActions(r) {
+		t.Run(action.Id, func(t *testing.T) {
+			require.NotEmpty(t, action.Id)
+			assert.Equal(t, action.Id, url.PathEscape(action.Id),
+				"action ID %q is altered by URL encoding, so the callback path will not match", action.Id)
+			assert.NotContains(t, action.Id, " ")
+		})
+	}
+}
+
+// Every button needs a distinct ID, or the wrong handler answers the press.
+func TestActionIDsAreUnique(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
+
+	seen := map[string]bool{}
+	for _, action := range tp.reminderActions(r) {
+		require.False(t, seen[action.Id], "duplicate action ID %q", action.Id)
+		seen[action.Id] = true
 	}
 }
