@@ -12,8 +12,12 @@ type KVStore interface {
 	GetReminders(userID string) ([]*reminder.Reminder, error)
 	// GetReminder returns a single reminder, or reminder.ErrNotFound.
 	GetReminder(userID, reminderID string) (*reminder.Reminder, error)
-	// SaveReminder inserts or replaces a reminder.
+	// SaveReminder inserts or replaces a reminder, rejecting the insert if the
+	// user is already at reminder.MaxRemindersPerUser.
 	SaveReminder(r *reminder.Reminder) error
+	// UpdateReminder replaces an existing reminder, returning
+	// reminder.ErrNotFound if it has since been deleted.
+	UpdateReminder(r *reminder.Reminder) error
 	// DeleteReminder removes a reminder. Removing an absent one is not an error.
 	DeleteReminder(userID, reminderID string) error
 	// DeleteAllReminders removes every reminder owned by the user.

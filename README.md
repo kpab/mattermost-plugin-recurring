@@ -17,11 +17,39 @@ This plugin fills that gap.
 
 ## Features
 
-- **Recurring reminders** — daily, weekdays, weekly on given days, monthly
-- **One-off reminders** — "in 30 minutes", "tomorrow at 9"
-- **Natural language input** in English and Japanese, plus a structured picker in the right-hand sidebar
-- **List, edit, complete and snooze** your reminders from the RHS
-- **Timezone-aware** — reminders fire in *your* timezone, not the server's
+- **Recurring reminders** — daily, weekdays, weekly on a given day, monthly
+- **Natural language input** in English and Japanese:
+  `/recurring every monday at 10:00 weekly report`, `/recurring 毎朝9時 ストレッチ`
+- **List and delete** your reminders from the slash command
+- **Timezone-aware** — reminders fire in *your* timezone, not the server's, and
+  keep their wall-clock time across daylight-saving changes
+
+### Not built yet
+
+- One-off reminders ("in 30 minutes")
+- A right-hand sidebar to browse and edit reminders
+- Completing and snoozing a reminder
+- Reminders posted to a channel, or assigned to someone else
+- Several weekdays in one reminder ("every Monday and Thursday")
+- Japanese UI strings (the slash command replies in English)
+
+## Usage
+
+```
+/recurring every monday at 10:00 weekly report
+/recurring weekdays 18:00 log off
+/recurring daily 9am stand-up
+/recurring monthly on the 1st 9:00 expenses
+/recurring 毎週月曜 10:00 週次報告
+/recurring 毎朝9時 ストレッチ
+
+/recurring list            # show your reminders
+/recurring delete <id>     # remove one
+/recurring help
+```
+
+Reminders arrive as a direct message from the plugin's bot. There is nothing to
+configure: the plugin has no settings.
 
 ## Installation
 

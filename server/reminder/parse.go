@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Parsing is deliberately hand written rather than handed to a date library:
@@ -55,18 +56,23 @@ var englishWeekdays = map[string]time.Weekday{
 // gets read as Monday, and "daily" would shadow longer phrases the same way.
 // The Japanese patterns cannot use \b — there are no word boundaries between
 // Japanese characters — so the two languages are kept apart.
+//
+// Case insensitivity is expressed with (?i) rather than by lower-casing the
+// input first: strings.ToLower does not preserve byte length (U+212A KELVIN
+// SIGN is three bytes and lower-cases to a one-byte "k"), so an offset taken
+// from the lower-cased string would slice the original in the wrong place.
 var (
 	reDailyJP = regexp.MustCompile(`^(?:毎日|毎朝|毎晩|毎夜)\s*`)
-	reDailyEN = regexp.MustCompile(`^(?:every\s+day|daily)\b\s*`)
+	reDailyEN = regexp.MustCompile(`(?i)^(?:every\s+day|daily)\b\s*`)
 
 	reWeekdaysJP = regexp.MustCompile(`^(?:平日|毎平日)\s*`)
-	reWeekdaysEN = regexp.MustCompile(`^(?:every\s+weekday|on\s+weekdays|weekdays?)\b\s*`)
+	reWeekdaysEN = regexp.MustCompile(`(?i)^(?:every\s+weekdays?|on\s+weekdays?|weekdays?)\b\s*`)
 
 	reWeeklyJP = regexp.MustCompile(`^毎週\s*([日月火水木金土])曜(?:日)?\s*`)
-	reWeeklyEN = regexp.MustCompile(`^(?:every\s+)?(sunday|sun|monday|mon|tuesday|tues|tue|wednesday|wed|thursday|thurs|thu|friday|fri|saturday|sat)s?\b\s*`)
+	reWeeklyEN = regexp.MustCompile(`(?i)^(?:every\s+)?(sunday|sun|monday|mon|tuesday|tues|tue|wednesday|wed|thursday|thurs|thu|friday|fri|saturday|sat)s?\b\s*`)
 
 	reMonthlyJP = regexp.MustCompile(`^毎月\s*(\d{1,2})\s*日\s*`)
-	reMonthlyEN = regexp.MustCompile(`^(?:every\s+month\s+on\s+(?:the\s+)?|monthly\s+on\s+(?:the\s+)?)(\d{1,2})(?:st|nd|rd|th)?\b\s*`)
+	reMonthlyEN = regexp.MustCompile(`(?i)^(?:every\s+month\s+on\s+(?:the\s+)?|monthly\s+on\s+(?:the\s+)?)(\d{1,2})(?:st|nd|rd|th)?\b\s*`)
 
 	// Times, tried in order. The 24-hour form is first so "18:30" is not read
 	// as a bare hour.
@@ -74,10 +80,10 @@ var (
 	reTimeJPHalf   = regexp.MustCompile(`^(\d{1,2})\s*時\s*半\s*`)
 	reTimeJPMinute = regexp.MustCompile(`^(\d{1,2})\s*時\s*(\d{1,2})\s*分?\s*`)
 	reTimeJPHour   = regexp.MustCompile(`^(\d{1,2})\s*時\s*`)
-	reTimeMeridiem = regexp.MustCompile(`^(?:at\s+)?(\d{1,2})\s*(am|pm)\s*`)
+	reTimeMeridiem = regexp.MustCompile(`(?i)^(?:at\s+)?(\d{1,2})\s*(am|pm)\s*`)
 
 	// Optional filler between the schedule and the time, e.g. "every day at 9am".
-	reAt = regexp.MustCompile(`^(?:at|の)\s*`)
+	reAt = regexp.MustCompile(`(?i)^(?:at\b|の)\s*`)
 )
 
 // ParseRecurring reads a recurring schedule and its message out of one line of
@@ -107,7 +113,7 @@ func ParseRecurring(input string) (Schedule, string, error) {
 	if message == "" {
 		return Schedule{}, "", ErrNoMessage
 	}
-	if len(message) > MaxMessageLength {
+	if utf8.RuneCountInString(message) > MaxMessageLength {
 		return Schedule{}, "", fmt.Errorf("that message is too long: keep it under %d characters", MaxMessageLength)
 	}
 
@@ -120,14 +126,12 @@ func ParseRecurring(input string) (Schedule, string, error) {
 
 // parseRecurrence consumes the leading recurrence phrase.
 func parseRecurrence(input string) (Schedule, string, error) {
-	lower := strings.ToLower(input)
-
 	// Weekdays before daily: "every weekday" must not be eaten by "every day".
 	if m := reWeekdaysJP.FindString(input); m != "" {
 		return Schedule{Kind: KindWeekdays}, input[len(m):], nil
 	}
 
-	if m := reWeekdaysEN.FindString(lower); m != "" {
+	if m := reWeekdaysEN.FindString(input); m != "" {
 		return Schedule{Kind: KindWeekdays}, input[len(m):], nil
 	}
 
@@ -135,7 +139,7 @@ func parseRecurrence(input string) (Schedule, string, error) {
 		return Schedule{Kind: KindDaily}, input[len(m):], nil
 	}
 
-	if m := reDailyEN.FindString(lower); m != "" {
+	if m := reDailyEN.FindString(input); m != "" {
 		return Schedule{Kind: KindDaily}, input[len(m):], nil
 	}
 
@@ -146,10 +150,10 @@ func parseRecurrence(input string) (Schedule, string, error) {
 		}, input[len(m[0]):], nil
 	}
 
-	if m := reWeeklyEN.FindStringSubmatch(lower); m != nil {
+	if m := reWeeklyEN.FindStringSubmatch(input); m != nil {
 		return Schedule{
 			Kind:     KindWeekly,
-			Weekdays: []time.Weekday{englishWeekdays[m[1]]},
+			Weekdays: []time.Weekday{englishWeekdays[strings.ToLower(m[1])]},
 		}, input[len(m[0]):], nil
 	}
 
@@ -161,7 +165,7 @@ func parseRecurrence(input string) (Schedule, string, error) {
 		return Schedule{Kind: KindMonthly, DayOfMonth: day}, input[len(m[0]):], nil
 	}
 
-	if m := reMonthlyEN.FindStringSubmatch(lower); m != nil {
+	if m := reMonthlyEN.FindStringSubmatch(input); m != nil {
 		day, err := strconv.Atoi(m[1])
 		if err != nil {
 			return Schedule{}, "", ErrNoSchedule
@@ -174,9 +178,7 @@ func parseRecurrence(input string) (Schedule, string, error) {
 
 // parseTimeOfDay consumes the leading time of day.
 func parseTimeOfDay(input string) (TimeOfDay, string, error) {
-	lower := strings.ToLower(input)
-
-	if m := reTimeColon.FindStringSubmatch(lower); m != nil {
+	if m := reTimeColon.FindStringSubmatch(input); m != nil {
 		hour, minute := atoi(m[1]), atoi(m[2])
 		if hour > 23 || minute > 59 {
 			return TimeOfDay{}, "", fmt.Errorf("%s is not a valid time", strings.TrimSpace(m[0]))
@@ -208,15 +210,16 @@ func parseTimeOfDay(input string) (TimeOfDay, string, error) {
 		return TimeOfDay{Hour: hour}, input[len(m[0]):], nil
 	}
 
-	if m := reTimeMeridiem.FindStringSubmatch(lower); m != nil {
+	if m := reTimeMeridiem.FindStringSubmatch(input); m != nil {
 		hour := atoi(m[1])
 		if hour < 1 || hour > 12 {
 			return TimeOfDay{}, "", fmt.Errorf("%s is not a valid time", strings.TrimSpace(m[0]))
 		}
-		if m[2] == "pm" && hour != 12 {
+		meridiem := strings.ToLower(m[2])
+		if meridiem == "pm" && hour != 12 {
 			hour += 12
 		}
-		if m[2] == "am" && hour == 12 {
+		if meridiem == "am" && hour == 12 {
 			hour = 0
 		}
 		return TimeOfDay{Hour: hour}, input[len(m[0]):], nil

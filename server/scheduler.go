@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strings"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -11,185 +10,141 @@ import (
 	"github.com/kpab/mattermost-plugin-recurring/server/reminder"
 )
 
-// Reminders are handed to cluster.JobOnceScheduler one firing at a time: when a
-// reminder fires we work out when it should next go off and queue that. The
-// scheduler persists each pending job and guarantees exactly one plugin
-// instance runs it, which is what makes this safe on a cluster and across
-// restarts. cluster.Schedule is not usable here because it only understands
-// fixed intervals, and "every Monday at 10:00" is not one.
+// Delivery is a single periodic sweep: every tick, every reminder whose
+// NextRunAt has passed is delivered and moved on to its following occurrence.
+// The reminder records in the KV store are the only state, which is what keeps
+// deleting, editing and firing from being able to contradict each other.
+//
+// The obvious-looking alternative — handing each reminder to
+// cluster.JobOnceScheduler and re-arming it from its own callback — does not
+// work. JobOnce runs the callback while holding the cluster mutex for that key,
+// so re-arming the same key from inside deadlocks against itself; its
+// saveMetadata refuses to overwrite an existing key; and it deletes the job
+// record as soon as the callback returns. It is built for jobs that genuinely
+// happen once.
 
 const (
-	// reminderIDLength keeps job keys inside the server's 50 character KV key
-	// limit. A key is "<userID>_<reminderID>" (26 + 1 + 16 = 43) and the
-	// scheduler adds a "once_" or "mutex_" prefix of its own.
-	reminderIDLength = 16
+	// tickInterval is how often reminders are swept for delivery. It also sets
+	// the worst-case delivery lag, so it trades punctuality against the cost of
+	// scanning every user's reminders.
+	tickInterval = time.Minute
 
-	jobKeySeparator = "_"
+	// schedulerJobKey names the cluster job. cluster.Schedule guarantees only
+	// one plugin instance runs the sweep at a time.
+	schedulerJobKey = "deliver-reminders"
+
+	// reminderIDLength is the length of the generated reminder IDs users type
+	// into `/recurring delete`. Short enough to retype, long enough that a
+	// collision within one user's list is not a practical concern.
+	reminderIDLength = 16
 )
 
-// newReminderID returns an ID short enough to fit in a job key.
+// newReminderID returns an ID for a new reminder.
 func newReminderID() string {
 	return model.NewRandomString(reminderIDLength)
 }
 
-// jobKey identifies a reminder's pending job. The user ID is part of the key so
-// the callback can find the reminder again without unpacking job props, whose
-// concrete type differs between a job scheduled in this process and one
-// restored from the KV store.
-func jobKey(userID, reminderID string) string {
-	return userID + jobKeySeparator + reminderID
-}
-
-func parseJobKey(key string) (userID, reminderID string, ok bool) {
-	userID, reminderID, found := strings.Cut(key, jobKeySeparator)
-	if !found || userID == "" || reminderID == "" {
-		return "", "", false
-	}
-
-	return userID, reminderID, true
-}
-
-// startScheduler wires up the reminder callback and starts the scheduler.
-// Starting it re-queues every job already persisted in the KV store, so
-// reminders survive a restart.
+// startScheduler begins the periodic delivery sweep.
 func (p *Plugin) startScheduler() error {
-	scheduler := cluster.GetJobOnceScheduler(p.API)
-
-	if err := scheduler.SetCallback(p.handleReminderFired); err != nil {
-		return errors.Wrap(err, "failed to set the reminder callback")
-	}
-
-	if err := scheduler.Start(); err != nil {
-		return errors.Wrap(err, "failed to start the reminder scheduler")
-	}
-
-	p.scheduler = scheduler
-
-	// Best effort: a reminder whose job went missing would otherwise stay
-	// silent forever, so re-queue those. Failing here is not worth refusing to
-	// activate over.
-	if err := p.requeueOrphanedReminders(); err != nil {
-		p.client.Log.Warn("Failed to re-queue reminders missing a scheduled job", "err", err)
-	}
-
-	return nil
-}
-
-// scheduleReminder queues the reminder's next firing, or cancels any pending
-// job if it is not going to fire again.
-func (p *Plugin) scheduleReminder(r *reminder.Reminder) error {
-	key := jobKey(r.UserID, r.ID)
-
-	if r.Completed || r.NextRunAt == 0 {
-		p.scheduler.Cancel(key)
-		return nil
-	}
-
-	if _, err := p.scheduler.ScheduleOnce(key, time.UnixMilli(r.NextRunAt), nil); err != nil {
-		return errors.Wrap(err, "failed to schedule reminder")
-	}
-
-	return nil
-}
-
-// cancelReminder drops any pending job for a reminder.
-func (p *Plugin) cancelReminder(userID, reminderID string) {
-	p.scheduler.Cancel(jobKey(userID, reminderID))
-}
-
-// handleReminderFired runs when a reminder comes due. It delivers the message
-// and then queues the following occurrence.
-func (p *Plugin) handleReminderFired(key string, _ any) {
-	userID, reminderID, ok := parseJobKey(key)
-	if !ok {
-		p.client.Log.Warn("Ignoring a reminder job with an unrecognised key", "key", key)
-		return
-	}
-
-	r, err := p.kvstore.GetReminder(userID, reminderID)
+	job, err := cluster.Schedule(
+		p.API,
+		schedulerJobKey,
+		cluster.MakeWaitForRoundedInterval(tickInterval),
+		p.deliverDueReminders,
+	)
 	if err != nil {
-		if errors.Is(err, reminder.ErrNotFound) {
-			// Deleted between being queued and firing. Nothing to do.
-			return
-		}
-		p.client.Log.Error("Failed to load a reminder that came due", "user_id", userID, "reminder_id", reminderID, "err", err)
-		return
+		return errors.Wrap(err, "failed to schedule reminder delivery")
 	}
 
-	if r.Completed {
-		return
-	}
-
-	if err := p.sendReminder(r); err != nil {
-		p.client.Log.Error("Failed to deliver a reminder", "user_id", userID, "reminder_id", reminderID, "err", err)
-		// Fall through and reschedule anyway: dropping the whole series
-		// because one delivery failed would be worse than missing one message.
-	}
-
-	now := time.Now()
-	r.Advance(now)
-	r.UpdatedAt = now.UnixMilli()
-
-	if err := p.kvstore.SaveReminder(r); err != nil {
-		p.client.Log.Error("Failed to record a reminder's next run", "user_id", userID, "reminder_id", reminderID, "err", err)
-		return
-	}
-
-	if err := p.scheduleReminder(r); err != nil {
-		p.client.Log.Error("Failed to queue a reminder's next run", "user_id", userID, "reminder_id", reminderID, "err", err)
-	}
-}
-
-// sendReminder delivers the reminder to its owner as a direct message from the
-// plugin's bot.
-func (p *Plugin) sendReminder(r *reminder.Reminder) error {
-	post := &model.Post{
-		Message: r.Message,
-	}
-
-	if err := p.client.Post.DM(p.botUserID, r.UserID, post); err != nil {
-		return errors.Wrap(err, "failed to send the reminder direct message")
-	}
+	p.backgroundJob = job
 
 	return nil
 }
 
-// requeueOrphanedReminders queues any reminder that should be pending but has
-// no job behind it. This can happen if the plugin died between saving a
-// reminder and scheduling it, and without this the reminder would never fire
-// again.
-func (p *Plugin) requeueOrphanedReminders() error {
-	jobs, err := p.scheduler.ListScheduledJobs()
-	if err != nil {
-		return errors.Wrap(err, "failed to list scheduled jobs")
-	}
+// deliverDueReminders is the scheduler tick.
+func (p *Plugin) deliverDueReminders() {
+	p.deliverDue(time.Now())
+}
 
-	scheduled := make(map[string]bool, len(jobs))
-	for _, job := range jobs {
-		scheduled[job.Key] = true
-	}
-
+// deliverDue delivers every reminder that has come due as of now. The clock is
+// a parameter so the sweep can be tested without waiting for one.
+func (p *Plugin) deliverDue(now time.Time) {
 	userIDs, err := p.kvstore.ListUserIDs()
 	if err != nil {
-		return errors.Wrap(err, "failed to list users with reminders")
+		p.client.Log.Error("Failed to list users with reminders", "err", err)
+		return
 	}
 
 	for _, userID := range userIDs {
 		reminders, err := p.kvstore.GetReminders(userID)
 		if err != nil {
-			p.client.Log.Warn("Failed to load reminders while re-queueing", "user_id", userID, "err", err)
+			p.client.Log.Error("Failed to load reminders for delivery", "user_id", userID, "err", err)
 			continue
 		}
 
 		for _, r := range reminders {
-			if r.Completed || r.NextRunAt == 0 || scheduled[jobKey(r.UserID, r.ID)] {
+			if !r.Due(now) {
 				continue
 			}
 
-			if err := p.scheduleReminder(r); err != nil {
-				p.client.Log.Warn("Failed to re-queue a reminder", "user_id", userID, "reminder_id", r.ID, "err", err)
-			}
+			p.deliverReminder(r, now)
 		}
+	}
+}
+
+// deliverReminder sends one reminder and records what happened.
+func (p *Plugin) deliverReminder(r *reminder.Reminder, now time.Time) {
+	updated := r.Clone()
+	updated.UpdatedAt = now.UnixMilli()
+
+	if err := p.send(r); err != nil {
+		updated.FailureCount++
+
+		if updated.FailureCount >= reminder.MaxDeliveryFailures {
+			// Stop rather than retry forever: the recipient is most likely
+			// deactivated, and the sweep would otherwise carry this failure
+			// every tick for the life of the server.
+			updated.NextRunAt = 0
+			p.client.Log.Error("Giving up on a reminder after repeated delivery failures",
+				"user_id", r.UserID, "reminder_id", r.ID, "failures", updated.FailureCount, "err", err)
+		} else {
+			// Leave NextRunAt alone so the next sweep tries again.
+			p.client.Log.Warn("Failed to deliver a reminder, will retry",
+				"user_id", r.UserID, "reminder_id", r.ID, "failures", updated.FailureCount, "err", err)
+		}
+	} else {
+		updated.FailureCount = 0
+
+		// Advance from now rather than from NextRunAt: if the server was down
+		// over several occurrences, the reminder fires once and then catches up
+		// to the future instead of replaying every missed one.
+		updated.Advance(now)
+	}
+
+	if err := p.kvstore.UpdateReminder(updated); err != nil {
+		if errors.Is(err, reminder.ErrNotFound) {
+			// Deleted while we were delivering it. Leave it deleted.
+			return
+		}
+		p.client.Log.Error("Failed to record a reminder's delivery",
+			"user_id", r.UserID, "reminder_id", r.ID, "err", err)
+	}
+}
+
+// sendReminder delivers the reminder to its owner as a direct message from the
+// plugin's bot. Plugin.send points here in production and is replaced in tests.
+func (p *Plugin) sendReminder(r *reminder.Reminder) error {
+	post := &model.Post{
+		Message: r.Message,
+	}
+
+	// The message is the user's own text echoed back to them in their own DM,
+	// but it still goes out under the bot's name, so suppress the channel-wide
+	// mention keywords rather than letting a reminder render as one.
+	post.AddProp("mentionHighlightDisabled", true)
+
+	if err := p.client.Post.DM(p.botUserID, r.UserID, post); err != nil {
+		return errors.Wrap(err, "failed to send the reminder direct message")
 	}
 
 	return nil

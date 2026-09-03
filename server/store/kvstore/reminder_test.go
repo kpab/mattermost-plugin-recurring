@@ -245,3 +245,66 @@ func TestRemindersAreScopedPerUser(t *testing.T) {
 	_, err = store.GetReminder(testUserID, "theirs")
 	assert.ErrorIs(t, err, reminder.ErrNotFound)
 }
+
+// Delivery writes back through UpdateReminder rather than SaveReminder so that
+// a reminder deleted mid-delivery is not resurrected by the write that records
+// its next run.
+func TestUpdateReminderRefusesToRecreate(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	r := newReminder("abc", 100)
+	require.NoError(t, store.SaveReminder(r))
+	require.NoError(t, store.DeleteReminder(testUserID, "abc"))
+
+	r.NextRunAt = 1_800_000_000_000
+	assert.ErrorIs(t, store.UpdateReminder(r), reminder.ErrNotFound)
+
+	all, err := store.GetReminders(testUserID)
+	require.NoError(t, err)
+	assert.Empty(t, all, "the deleted reminder must not come back")
+}
+
+func TestUpdateReminderReplacesExisting(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	r := newReminder("abc", 100)
+	require.NoError(t, store.SaveReminder(r))
+
+	r.Message = "updated"
+	require.NoError(t, store.UpdateReminder(r))
+
+	got, err := store.GetReminder(testUserID, "abc")
+	require.NoError(t, err)
+	assert.Equal(t, "updated", got.Message)
+}
+
+// One user must not be able to fill the KV store, since every reminder is
+// re-read on each change and scanned on every scheduler tick.
+func TestSaveReminderEnforcesPerUserLimit(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	for i := range reminder.MaxRemindersPerUser {
+		require.NoError(t, store.SaveReminder(newReminder(fmt.Sprintf("id%03d", i), int64(i))))
+	}
+
+	err := store.SaveReminder(newReminder("one-too-many", 999))
+	assert.ErrorIs(t, err, reminder.ErrTooManyReminders)
+
+	all, err := store.GetReminders(testUserID)
+	require.NoError(t, err)
+	assert.Len(t, all, reminder.MaxRemindersPerUser)
+}
+
+// Being at the limit must not block editing what is already there.
+func TestUpdatingAtTheLimitStillWorks(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	for i := range reminder.MaxRemindersPerUser {
+		require.NoError(t, store.SaveReminder(newReminder(fmt.Sprintf("id%03d", i), int64(i))))
+	}
+
+	existing := newReminder("id000", 0)
+	existing.Message = "edited at the limit"
+	assert.NoError(t, store.SaveReminder(existing))
+	assert.NoError(t, store.UpdateReminder(existing))
+}

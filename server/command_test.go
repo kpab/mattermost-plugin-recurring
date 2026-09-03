@@ -69,14 +69,18 @@ func TestParseCommand(t *testing.T) {
 	}
 }
 
-func TestEscapePipes(t *testing.T) {
-	// A message containing a pipe would otherwise split the markdown table.
-	assert.Equal(t, `a \| b`, escapePipes("a | b"))
-	assert.Equal(t, "no pipes here", escapePipes("no pipes here"))
+func TestEscapeTableCell(t *testing.T) {
+	// A pipe would split the markdown table into another column, a newline
+	// into another row.
+	assert.Equal(t, `a \| b`, escapeTableCell("a | b"))
+	assert.Equal(t, "a b", escapeTableCell("a\nb"))
+	assert.Equal(t, "nothing to escape", escapeTableCell("nothing to escape"))
 }
 
 func TestCapitalise(t *testing.T) {
 	assert.Equal(t, "Could not understand", capitalise("could not understand"))
 	assert.Equal(t, "", capitalise(""))
 	assert.Equal(t, "Already capital", capitalise("Already capital"))
+	// Must not corrupt a multi-byte first character.
+	assert.Equal(t, "毎日のリマインダー", capitalise("毎日のリマインダー"))
 }

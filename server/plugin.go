@@ -10,6 +10,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"github.com/pkg/errors"
 
+	"github.com/kpab/mattermost-plugin-recurring/server/reminder"
 	"github.com/kpab/mattermost-plugin-recurring/server/store/kvstore"
 )
 
@@ -26,11 +27,16 @@ type Plugin struct {
 	// router is the HTTP router for handling API requests.
 	router *mux.Router
 
-	// scheduler queues each reminder's next firing.
-	scheduler *cluster.JobOnceScheduler
+	// backgroundJob runs the periodic reminder delivery sweep.
+	backgroundJob *cluster.Job
 
 	// botUserID is the account reminders are delivered from.
 	botUserID string
+
+	// send delivers one reminder. It points at sendReminder in production and
+	// is swapped out in tests so the delivery sweep can be exercised without a
+	// live server.
+	send func(r *reminder.Reminder) error
 
 	// configurationLock synchronizes access to the configuration.
 	configurationLock sync.RWMutex
@@ -62,11 +68,33 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.botUserID = botUserID
 
+	p.send = p.sendReminder
+
 	if err := p.startScheduler(); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// OnDeactivate is invoked when the plugin is deactivated.
+func (p *Plugin) OnDeactivate() error {
+	if p.backgroundJob != nil {
+		if err := p.backgroundJob.Close(); err != nil {
+			p.API.LogError("Failed to stop reminder delivery", "err", err)
+		}
+	}
+
+	return nil
+}
+
+// UserHasBeenDeactivated drops a deactivated user's reminders. Without this
+// their reminders would be swept and delivered on every tick forever, failing
+// each time.
+func (p *Plugin) UserHasBeenDeactivated(_ *plugin.Context, user *model.User) {
+	if err := p.kvstore.DeleteAllReminders(user.Id); err != nil {
+		p.client.Log.Error("Failed to remove a deactivated user's reminders", "user_id", user.Id, "err", err)
+	}
 }
 
 // See https://developers.mattermost.com/extend/plugins/server/reference/

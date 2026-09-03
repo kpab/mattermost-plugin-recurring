@@ -1,6 +1,7 @@
 package reminder
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -263,4 +264,50 @@ func TestParsedSchedulesAllDescribe(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotEqual(t, "unknown schedule", schedule.Describe())
 	}
+}
+
+// "every weekdays" used to fail: the alternation matched "every weekday" and
+// then the \b assertion failed against the trailing "s".
+func TestParseRecurringAcceptsPluralWeekdays(t *testing.T) {
+	for _, input := range []string{
+		"every weekday 09:00 stand-up",
+		"every weekdays 09:00 stand-up",
+		"weekday 09:00 stand-up",
+		"weekdays 09:00 stand-up",
+		"on weekdays 09:00 stand-up",
+	} {
+		t.Run(input, func(t *testing.T) {
+			schedule, message, err := ParseRecurring(input)
+			require.NoError(t, err)
+			assert.Equal(t, KindWeekdays, schedule.Kind)
+			assert.Equal(t, "stand-up", message)
+		})
+	}
+}
+
+// Matching is case-insensitive via (?i) rather than by lower-casing the input,
+// because ToLower does not preserve byte offsets. U+212A KELVIN SIGN lower-cases
+// to a one-byte "k"; using an offset from the lower-cased string would slice the
+// original input in the wrong place and mangle the message.
+func TestParseRecurringHandlesLengthChangingCaseFolding(t *testing.T) {
+	// "weeKdays" with U+212A in place of the K.
+	schedule, message, err := ParseRecurring("weeKdays 10:00 hello")
+	require.NoError(t, err)
+	assert.Equal(t, KindWeekdays, schedule.Kind)
+	assert.Equal(t, "hello", message)
+}
+
+// Message length is counted in runes, so a Japanese message gets the full
+// advertised allowance rather than a third of it.
+func TestParseRecurringCountsMessageLengthInRunes(t *testing.T) {
+	// 500 Japanese characters is 1500 bytes but well under the rune limit.
+	long := strings.Repeat("あ", 500)
+
+	_, message, err := ParseRecurring("毎日 9:00 " + long)
+	require.NoError(t, err)
+	assert.Equal(t, long, message)
+
+	tooLong := strings.Repeat("あ", MaxMessageLength+1)
+	_, _, err = ParseRecurring("毎日 9:00 " + tooLong)
+	assert.Error(t, err)
 }

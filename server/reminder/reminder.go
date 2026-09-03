@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Kind describes how a reminder repeats.
@@ -28,12 +29,24 @@ const (
 	KindMonthly Kind = "monthly"
 )
 
-// MaxMessageLength bounds the reminder text so a single user cannot store an
-// unbounded amount of data in the KV store.
-const MaxMessageLength = 1000
+const (
+	// MaxMessageLength bounds the reminder text so a single user cannot store
+	// an unbounded amount of data in the KV store. Counted in runes, not bytes:
+	// a Japanese message is three bytes per character and would otherwise be
+	// cut off at a third of the advertised length.
+	MaxMessageLength = 1000
+
+	// MaxRemindersPerUser caps how many reminders one user can hold. Every
+	// reminder is re-read and re-written on each change, and scanned on every
+	// scheduler tick, so an unbounded list is a denial-of-service vector.
+	MaxRemindersPerUser = 100
+)
 
 // ErrNotFound is returned when a reminder does not exist.
 var ErrNotFound = errors.New("reminder not found")
+
+// ErrTooManyReminders is returned when a user is already at MaxRemindersPerUser.
+var ErrTooManyReminders = fmt.Errorf("you already have %d reminders, which is the maximum", MaxRemindersPerUser)
 
 // TimeOfDay is a wall-clock time, interpreted in the owning user's timezone.
 type TimeOfDay struct {
@@ -126,9 +139,18 @@ type Reminder struct {
 	// recurring reminder stops firing but is kept until deleted.
 	Completed bool `json:"completed"`
 
+	// FailureCount counts consecutive delivery failures. A reminder addressed
+	// to someone who can no longer receive it would otherwise be retried
+	// forever, so delivery gives up once this passes MaxDeliveryFailures.
+	FailureCount int `json:"failure_count,omitempty"`
+
 	CreatedAt int64 `json:"created_at"`
 	UpdatedAt int64 `json:"updated_at"`
 }
+
+// MaxDeliveryFailures is how many consecutive delivery failures a reminder
+// survives before it is parked.
+const MaxDeliveryFailures = 10
 
 // Validate reports whether the reminder is well formed.
 func (r *Reminder) Validate() error {
@@ -141,8 +163,8 @@ func (r *Reminder) Validate() error {
 	if strings.TrimSpace(r.Message) == "" {
 		return errors.New("reminder needs a message")
 	}
-	if len(r.Message) > MaxMessageLength {
-		return fmt.Errorf("message must be at most %d characters, got %d", MaxMessageLength, len(r.Message))
+	if count := utf8.RuneCountInString(r.Message); count > MaxMessageLength {
+		return fmt.Errorf("message must be at most %d characters, got %d", MaxMessageLength, count)
 	}
 	if r.Timezone == "" {
 		return errors.New("reminder needs a timezone")
@@ -152,6 +174,11 @@ func (r *Reminder) Validate() error {
 	}
 
 	return r.Schedule.Validate()
+}
+
+// Due reports whether the reminder should be delivered now.
+func (r *Reminder) Due(now time.Time) bool {
+	return !r.Completed && r.NextRunAt > 0 && r.NextRunAt <= now.UnixMilli()
 }
 
 // Location resolves the reminder's timezone, falling back to UTC when the name

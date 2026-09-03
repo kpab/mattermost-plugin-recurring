@@ -1,0 +1,10 @@
+Recurring Reminders for Mattermost
+Copyright 2026 kpab
+
+This product includes software developed at Mattermost, Inc.
+It is based on mattermost/mattermost-plugin-starter-template
+(https://github.com/mattermost/mattermost-plugin-starter-template),
+Copyright (c) 2015-present Mattermost, Inc., licensed under the Apache License 2.0.
+
+The build tooling under build/, the Makefile, and parts of webapp/ derive from
+that template.

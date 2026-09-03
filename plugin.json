@@ -18,9 +18,5 @@
     "webapp": {
         "bundle_path": "webapp/dist/main.js"
     },
-    "settings_schema": {
-        "header": "Configure how Recurring Reminders behaves on this server.",
-        "footer": "",
-        "settings": []
-    }
+    "release_notes_url": "https://github.com/kpab/mattermost-plugin-recurring/releases"
 }

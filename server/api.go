@@ -14,15 +14,18 @@ func (p *Plugin) initRouter() *mux.Router {
 	// Middleware to require that the user is logged in
 	router.Use(p.MattermostAuthorizationRequired)
 
-	apiRouter := router.PathPrefix("/api/v1").Subrouter()
-
-	apiRouter.HandleFunc("/hello", p.HelloWorld).Methods(http.MethodGet)
+	// The API surface is added in M2, when the right-hand sidebar needs it.
+	// The prefix and the auth middleware are set up now so that every route
+	// added later is behind the login check by construction. Note that mux only
+	// runs middleware for requests that match a route, so with no routes
+	// registered the middleware never runs and everything is a 404.
+	router.PathPrefix("/api/v1").Subrouter()
 
 	return router
 }
 
-// ServeHTTP demonstrates a plugin that handles HTTP requests by greeting the world.
-// The root URL is currently <siteUrl>/plugins/com.github.kpab.recurring/api/v1/. Replace com.github.kpab.recurring with the plugin ID.
+// ServeHTTP routes requests sent to
+// <siteUrl>/plugins/com.github.kpab.recurring/.
 func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
 	p.router.ServeHTTP(w, r)
 }
@@ -37,11 +40,4 @@ func (p *Plugin) MattermostAuthorizationRequired(next http.Handler) http.Handler
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-func (p *Plugin) HelloWorld(w http.ResponseWriter, r *http.Request) {
-	if _, err := w.Write([]byte("Hello, world!")); err != nil {
-		p.API.LogError("Failed to write response", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
 }

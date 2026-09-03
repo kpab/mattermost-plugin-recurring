@@ -433,7 +433,3 @@ logs-watch:
 help:
 	@cat Makefile build/*.mk | grep -v '\.PHONY' |  grep -v '\help:' | grep -B1 -E '^[a-zA-Z0-9_.-]+:.*' | sed -e "s/:.*//" | sed -e "s/^## //" |  grep -v '\-\-' | sed '1!G;h;$$!d' | awk 'NR%2{printf "\033[36m%-30s\033[0m",$$0;next;}1' | sort
 
-mock:
-ifneq ($(HAS_SERVER),)
-	go install go.uber.org/mock/mockgen@v0.6.0
-endif

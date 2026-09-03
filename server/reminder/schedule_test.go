@@ -254,3 +254,101 @@ func TestLocationFallsBackToUTC(t *testing.T) {
 
 	assert.Equal(t, time.UTC, r.Location())
 }
+
+// A daily reminder must fire once a day, every day, in every timezone. The
+// original implementation stepped a timestamp rather than a calendar date and
+// so skipped the day entirely in zones whose clocks jump at midnight
+// (America/Santiago each September), which a weekly schedule turns into a
+// skipped week and a monthly one into a skipped month.
+func TestNextRunNeverSkipsADay(t *testing.T) {
+	zones := []string{
+		"Asia/Tokyo",       // no DST
+		"America/New_York", // springs forward at 02:00
+		"America/Santiago", // springs forward at 00:00
+		"America/Havana",   // springs forward at 00:00
+		"America/Asuncion", // springs forward at 00:00
+		"Australia/Lord_Howe",
+		"Pacific/Chatham",
+		"Europe/Lisbon",
+	}
+
+	for _, name := range zones {
+		t.Run(name, func(t *testing.T) {
+			loc := mustLoad(t, name)
+			schedule := Schedule{Kind: KindDaily, At: TimeOfDay{Hour: 9}}
+
+			cursor := time.Date(2020, time.January, 1, 0, 0, 0, 0, loc)
+			end := time.Date(2030, time.January, 1, 0, 0, 0, 0, loc)
+
+			for cursor.Before(end) {
+				next, ok := schedule.NextRun(cursor, loc)
+				require.True(t, ok, "schedule stopped firing at %s", cursor)
+
+				gap := next.Sub(cursor)
+				assert.LessOrEqual(t, gap, 30*time.Hour,
+					"gap of %s between %s and %s — a day was skipped",
+					gap, cursor.Format(time.RFC3339), next.Format(time.RFC3339))
+
+				cursor = next
+			}
+		})
+	}
+}
+
+// A monthly reminder must fire every month, including across a midnight DST
+// jump landing on the chosen day.
+func TestNextRunMonthlyNeverSkipsAMonth(t *testing.T) {
+	santiago := mustLoad(t, "America/Santiago")
+
+	for day := 1; day <= 28; day++ {
+		schedule := Schedule{Kind: KindMonthly, At: TimeOfDay{Hour: 9}, DayOfMonth: day}
+
+		cursor := time.Date(2020, time.January, 1, 0, 0, 0, 0, santiago)
+		end := time.Date(2030, time.January, 1, 0, 0, 0, 0, santiago)
+
+		for cursor.Before(end) {
+			next, ok := schedule.NextRun(cursor, santiago)
+			require.True(t, ok)
+
+			assert.LessOrEqual(t, next.Sub(cursor), 32*24*time.Hour,
+				"day %d: gap between %s and %s spans more than a month",
+				day, cursor.Format(time.RFC3339), next.Format(time.RFC3339))
+
+			cursor = next
+		}
+	}
+}
+
+// Whatever a zone does to a non-existent wall-clock time, the reminder must
+// never fire earlier than asked.
+func TestNextRunNeverFiresEarlierThanRequested(t *testing.T) {
+	zones := []string{"America/New_York", "America/Santiago", "America/Havana", "Australia/Lord_Howe"}
+
+	for _, name := range zones {
+		t.Run(name, func(t *testing.T) {
+			loc := mustLoad(t, name)
+
+			for hour := range 24 {
+				for _, minute := range []int{0, 30} {
+					schedule := Schedule{Kind: KindDaily, At: TimeOfDay{Hour: hour, Minute: minute}}
+
+					cursor := time.Date(2020, time.January, 1, 0, 0, 0, 0, loc)
+					end := time.Date(2030, time.January, 1, 0, 0, 0, 0, loc)
+
+					for cursor.Before(end) {
+						next, ok := schedule.NextRun(cursor, loc)
+						require.True(t, ok)
+
+						wanted := hour*60 + minute
+						got := next.Hour()*60 + next.Minute()
+						assert.GreaterOrEqual(t, got, wanted,
+							"%02d:%02d became %s — fired earlier than requested",
+							hour, minute, next.Format(time.RFC3339))
+
+						cursor = next
+					}
+				}
+			}
+		})
+	}
+}

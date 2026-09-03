@@ -70,7 +70,37 @@ func (kv Client) SaveReminder(r *reminder.Reminder) error {
 				return reminders, nil
 			}
 		}
+
+		if len(reminders) >= reminder.MaxRemindersPerUser {
+			return nil, reminder.ErrTooManyReminders
+		}
+
 		return append(reminders, toSave), nil
+	})
+}
+
+// UpdateReminder replaces an existing reminder, returning reminder.ErrNotFound
+// if it is already gone.
+//
+// Delivery uses this rather than SaveReminder: a reminder the user deleted
+// while it was being delivered must stay deleted, and an upsert would quietly
+// resurrect it with a fresh NextRunAt.
+func (kv Client) UpdateReminder(r *reminder.Reminder) error {
+	if err := r.Validate(); err != nil {
+		return errors.Wrap(err, "refusing to save an invalid reminder")
+	}
+
+	toSave := r.Clone()
+
+	return kv.updateReminders(r.UserID, func(reminders []*reminder.Reminder) ([]*reminder.Reminder, error) {
+		for i, existing := range reminders {
+			if existing.ID == toSave.ID {
+				reminders[i] = toSave
+				return reminders, nil
+			}
+		}
+
+		return nil, reminder.ErrNotFound
 	})
 }
 

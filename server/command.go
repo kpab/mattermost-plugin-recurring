@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -144,13 +145,11 @@ func (p *Plugin) createReminderText(userID, input string) string {
 	}
 
 	if err := p.kvstore.SaveReminder(r); err != nil {
+		if errors.Is(err, reminder.ErrTooManyReminders) {
+			return capitalise(reminder.ErrTooManyReminders.Error()) + " Delete one with `/recurring delete <id>` first."
+		}
 		p.client.Log.Error("Failed to save a reminder", "user_id", userID, "err", err)
 		return "Something went wrong saving that reminder. Please try again."
-	}
-
-	if err := p.scheduleReminder(r); err != nil {
-		p.client.Log.Error("Failed to schedule a reminder", "user_id", userID, "reminder_id", r.ID, "err", err)
-		return "Saved the reminder, but failed to schedule it. It will be picked up when the plugin restarts."
 	}
 
 	return fmt.Sprintf("Got it — I'll remind you **%s** %s.\nNext: **%s**. ID `%s`.",
@@ -179,7 +178,7 @@ func (p *Plugin) listRemindersText(userID string) string {
 		}
 
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | `%s` |\n",
-			state, escapePipes(r.Message), r.Schedule.Describe(), next, r.ID)
+			state, escapeTableCell(r.Message), r.Schedule.Describe(), next, r.ID)
 	}
 
 	return b.String()
@@ -204,8 +203,6 @@ func (p *Plugin) deleteReminderText(userID, reminderID string) string {
 		p.client.Log.Error("Failed to delete a reminder", "user_id", userID, "reminder_id", reminderID, "err", err)
 		return "Something went wrong deleting that reminder. Please try again."
 	}
-
-	p.cancelReminder(userID, reminderID)
 
 	return fmt.Sprintf("Deleted **%s**.", r.Message)
 }
@@ -245,16 +242,26 @@ func ephemeral(text string) *model.CommandResponse {
 	}
 }
 
-// escapePipes keeps a message containing "|" from breaking the markdown table.
-func escapePipes(s string) string {
-	return strings.ReplaceAll(s, "|", `\|`)
+// escapeTableCell keeps a message from breaking out of the markdown table it is
+// rendered in: a pipe would start a new column and a newline a new row.
+func escapeTableCell(s string) string {
+	s = strings.ReplaceAll(s, "|", `\|`)
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+
+	return s
 }
 
 // capitalise upper-cases the first letter, so error strings read as sentences.
+// It works in runes: slicing the first byte would corrupt a message that starts
+// with a multi-byte character.
 func capitalise(s string) string {
 	if s == "" {
 		return s
 	}
 
-	return strings.ToUpper(s[:1]) + s[1:]
+	runes := []rune(s)
+	runes[0] = unicode.ToUpper(runes[0])
+
+	return string(runes)
 }

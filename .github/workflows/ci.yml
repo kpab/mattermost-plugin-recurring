@@ -16,3 +16,7 @@ jobs:
   plugin-ci:
     uses: mattermost/actions-workflows/.github/workflows/plugin-ci.yml@main
     secrets: inherit
+    with:
+      # .golangci.yml uses the v2 schema, which the reusable workflow's default
+      # (v1.55.2) cannot parse. Keep this in step with the version in Makefile.
+      golangci-lint-version: v2.9.0
