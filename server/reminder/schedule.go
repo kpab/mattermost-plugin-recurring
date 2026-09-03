@@ -1,6 +1,9 @@
 package reminder
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // maxLookaheadDays bounds the search for the next firing day. Every recurring
 // kind we support fires at least once in any 62-day window (the longest gap is
@@ -99,13 +102,7 @@ func (s Schedule) fallsOn(year int, month time.Month, day int) bool {
 		return weekday != time.Saturday && weekday != time.Sunday
 
 	case KindWeekly:
-		weekday := weekdayOn(year, month, day)
-		for _, d := range s.Weekdays {
-			if d == weekday {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(s.Weekdays, weekdayOn(year, month, day))
 
 	case KindMonthly:
 		return day == effectiveDayOfMonth(s.DayOfMonth, year, month)

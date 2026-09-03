@@ -144,8 +144,8 @@ func (kv Client) ListUserIDs() ([]string, error) {
 		}
 
 		for _, key := range keys {
-			if strings.HasPrefix(key, remindersKeyPrefix) {
-				userIDs = append(userIDs, strings.TrimPrefix(key, remindersKeyPrefix))
+			if userID, ok := strings.CutPrefix(key, remindersKeyPrefix); ok {
+				userIDs = append(userIDs, userID)
 			}
 		}
 

@@ -139,7 +139,7 @@ func newTestPlugin(t *testing.T) *testPlugin {
 
 	// sendReminder is replaced wholesale so the tests do not need a live
 	// Mattermost API; delivery success or failure is what the sweep branches on.
-	tp.Plugin.send = func(r *reminder.Reminder) error {
+	tp.send = func(r *reminder.Reminder) error {
 		if tp.fail != nil {
 			return tp.fail
 		}
@@ -308,7 +308,7 @@ func TestDeliveryDoesNotResurrectADeletedReminder(t *testing.T) {
 	require.NoError(t, tp.store.SaveReminder(r))
 
 	// Delete it midway through delivery.
-	tp.Plugin.send = func(_ *reminder.Reminder) error {
+	tp.send = func(_ *reminder.Reminder) error {
 		return tp.store.DeleteReminder("user1", "r1")
 	}
 
