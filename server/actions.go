@@ -49,6 +49,44 @@ func actionURL(action string) string {
 	return "/plugins/" + manifest.Id + actionPathPrefix + "/" + action
 }
 
+// listActions builds the buttons shown next to a reminder in /recurring list.
+//
+// The list needs its own buttons, not just the delivered message's, because the
+// mobile app runs no plugin UI at all: a sidebar is invisible there, and a
+// 16 character ID printed for copying is unusable on a phone. Buttons are the
+// one control surface that works everywhere.
+func (p *Plugin) listActions(r *reminder.Reminder) []*model.PostAction {
+	toggle := &model.PostAction{
+		Id:   "pause",
+		Type: model.PostActionTypeButton,
+		Name: "Pause",
+		Integration: &model.PostActionIntegration{
+			URL:     actionURL("pause"),
+			Context: map[string]any{contextReminderID: r.ID},
+		},
+	}
+
+	if r.Paused {
+		toggle.Id = "resume"
+		toggle.Name = "Resume"
+		toggle.Integration.URL = actionURL("resume")
+	}
+
+	return []*model.PostAction{
+		toggle,
+		{
+			Id:    "delete",
+			Type:  model.PostActionTypeButton,
+			Name:  "Delete",
+			Style: "danger",
+			Integration: &model.PostActionIntegration{
+				URL:     actionURL("delete"),
+				Context: map[string]any{contextReminderID: r.ID},
+			},
+		},
+	}
+}
+
 // reminderActions builds the buttons attached to a delivered reminder.
 func (p *Plugin) reminderActions(r *reminder.Reminder) []*model.PostAction {
 	actions := make([]*model.PostAction, 0, len(snoozeOptions)+1)
@@ -146,7 +184,7 @@ func (p *Plugin) handleSnooze(w http.ResponseWriter, req *http.Request) {
 	p.respondToAction(w, request, "⏰ **"+escapeInline(r.Message)+"**\n_snoozed until "+p.formatRunAt(r)+"_")
 }
 
-// handlePause stops a reminder from the delivered message.
+// handlePause stops a reminder.
 func (p *Plugin) handlePause(w http.ResponseWriter, req *http.Request) {
 	request, r, ok := p.decodeAction(w, req)
 	if !ok {
@@ -164,7 +202,47 @@ func (p *Plugin) handlePause(w http.ResponseWriter, req *http.Request) {
 	}
 
 	p.respondToAction(w, request,
-		"⏰ **"+escapeInline(r.Message)+"**\n_stopped · resume it with_ `/recurring resume "+r.ID+"`")
+		"⏰ **"+escapeInline(r.Message)+"**\n_paused · resume it with_ `/recurring resume "+r.ID+"`")
+}
+
+// handleResume starts a paused reminder again.
+func (p *Plugin) handleResume(w http.ResponseWriter, req *http.Request) {
+	request, r, ok := p.decodeAction(w, req)
+	if !ok {
+		return
+	}
+
+	now := time.Now()
+	r.Paused = false
+	r.UpdatedAt = now.UnixMilli()
+
+	// Its old next run is in the past by now, so find the following one.
+	r.Advance(now)
+
+	if err := p.kvstore.UpdateReminder(r); err != nil {
+		p.client.Log.Error("Failed to resume a reminder", "user_id", r.UserID, "reminder_id", r.ID, "err", err)
+		p.respondToAction(w, request, "Something went wrong. Please try again.")
+		return
+	}
+
+	p.respondToAction(w, request,
+		"⏰ **"+escapeInline(r.Message)+"**\n_resumed · next "+p.formatRunAt(r)+"_")
+}
+
+// handleDelete removes a reminder.
+func (p *Plugin) handleDelete(w http.ResponseWriter, req *http.Request) {
+	request, r, ok := p.decodeAction(w, req)
+	if !ok {
+		return
+	}
+
+	if err := p.kvstore.DeleteReminder(r.UserID, r.ID); err != nil {
+		p.client.Log.Error("Failed to delete a reminder", "user_id", r.UserID, "reminder_id", r.ID, "err", err)
+		p.respondToAction(w, request, "Something went wrong. Please try again.")
+		return
+	}
+
+	p.respondToAction(w, request, "~~"+escapeInline(r.Message)+"~~ _deleted_")
 }
 
 // loadOwnReminder fetches a reminder belonging to the given user.

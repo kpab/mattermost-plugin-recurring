@@ -233,3 +233,98 @@ func TestActionIDsAreUnique(t *testing.T) {
 		seen[action.Id] = true
 	}
 }
+
+// The list's buttons are the only control surface that reaches the mobile app,
+// so they have to satisfy the same constraints as the delivered message's.
+func TestListActionsAreAlphanumericAndPointAtRoutes(t *testing.T) {
+	tp := newTestPlugin(t)
+	tp.router = tp.initRouter()
+
+	alphanumeric := regexp.MustCompile(`^[A-Za-z0-9]+$`)
+
+	for _, paused := range []bool{false, true} {
+		r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
+		r.Paused = paused
+		require.NoError(t, tp.store.SaveReminder(r))
+
+		for _, action := range tp.listActions(r) {
+			require.NotNil(t, action.Integration)
+			assert.Regexp(t, alphanumeric, action.Id)
+			assert.True(t, strings.HasPrefix(action.Integration.URL, "/plugins/"+manifest.Id+"/"))
+
+			body, err := json.Marshal(model.PostActionIntegrationRequest{Context: action.Integration.Context})
+			require.NoError(t, err)
+
+			path := strings.TrimPrefix(action.Integration.URL, "/plugins/"+manifest.Id)
+			req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+			req.Header.Set("Mattermost-User-ID", "user1")
+			w := httptest.NewRecorder()
+
+			tp.ServeHTTP(nil, w, req)
+
+			assert.NotEqual(t, http.StatusNotFound, w.Code,
+				"button %q posts to %s, which no route handles", action.Name, action.Integration.URL)
+		}
+	}
+}
+
+// A paused reminder offers Resume, a running one offers Pause.
+func TestListActionsToggleWithState(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	running := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
+	assert.Equal(t, "Pause", tp.listActions(running)[0].Name)
+
+	paused := running.Clone()
+	paused.Paused = true
+	assert.Equal(t, "Resume", tp.listActions(paused)[0].Name)
+}
+
+func TestResumeAction(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().Add(-time.Hour).UnixMilli())
+	r.Paused = true
+	require.NoError(t, tp.store.SaveReminder(r))
+
+	w := postAction(t, tp, "/resume", "user1", map[string]any{contextReminderID: "r1"})
+	require.Equal(t, http.StatusOK, w.Code)
+
+	stored, err := tp.store.GetReminder("user1", "r1")
+	require.NoError(t, err)
+	assert.False(t, stored.Paused)
+	assert.Greater(t, stored.NextRunAt, time.Now().UnixMilli(),
+		"resuming must move the next run into the future, not leave it in the past")
+}
+
+func TestDeleteAction(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	require.NoError(t, tp.store.SaveReminder(
+		testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())))
+
+	w := postAction(t, tp, "/delete", "user1", map[string]any{contextReminderID: "r1"})
+	require.Equal(t, http.StatusOK, w.Code)
+
+	_, err := tp.store.GetReminder("user1", "r1")
+	assert.ErrorIs(t, err, reminder.ErrNotFound)
+}
+
+// Deleting or resuming someone else's reminder must be as impossible as pausing it.
+func TestResumeAndDeleteCannotReachAnotherUsersReminder(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	victim := testReminder("victim", "secret1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
+	require.NoError(t, tp.store.SaveReminder(victim))
+
+	for _, path := range []string{"/resume", "/delete"} {
+		t.Run(path, func(t *testing.T) {
+			w := postAction(t, tp, path, "attacker", map[string]any{contextReminderID: "secret1"})
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Contains(t, w.Body.String(), "gone")
+
+			_, err := tp.store.GetReminder("victim", "secret1")
+			assert.NoError(t, err, "another user's reminder must still be there")
+		})
+	}
+}

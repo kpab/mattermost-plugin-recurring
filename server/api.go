@@ -25,6 +25,8 @@ func (p *Plugin) initRouter() *mux.Router {
 	actions := api.PathPrefix("/actions").Subrouter()
 	actions.HandleFunc("/snooze", p.handleSnooze).Methods(http.MethodPost)
 	actions.HandleFunc("/pause", p.handlePause).Methods(http.MethodPost)
+	actions.HandleFunc("/resume", p.handleResume).Methods(http.MethodPost)
+	actions.HandleFunc("/delete", p.handleDelete).Methods(http.MethodPost)
 
 	return router
 }

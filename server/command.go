@@ -131,7 +131,7 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 	case subcommandHelp:
 		return ephemeral(p.helpText(args.UserId)), nil
 	case subcommandList:
-		return ephemeral(p.listRemindersText(args.UserId)), nil
+		return p.listRemindersResponse(args.UserId), nil
 	case subcommandDelete:
 		return ephemeral(p.deleteReminderText(args.UserId, arg)), nil
 	case subcommandPause:
@@ -197,37 +197,45 @@ func (p *Plugin) createReminderText(userID, input string) string {
 		r.Message, r.Schedule.Describe(), p.formatRunAt(r), r.ID)
 }
 
-// listRemindersText renders the user's reminders.
-func (p *Plugin) listRemindersText(userID string) string {
+// listRemindersResponse renders the user's reminders, one attachment each so
+// that every reminder carries its own buttons.
+//
+// Buttons rather than printed IDs, because the mobile app runs no plugin UI:
+// there is no sidebar there to click, and copying a 16 character ID on a phone
+// to paste into a second command is not a workflow anyone will use twice.
+func (p *Plugin) listRemindersResponse(userID string) *model.CommandResponse {
 	reminders, err := p.kvstore.GetReminders(userID)
 	if err != nil {
 		p.client.Log.Error("Failed to list reminders", "user_id", userID, "err", err)
-		return "Something went wrong reading your reminders. Please try again."
+		return ephemeral("Something went wrong reading your reminders. Please try again.")
 	}
 
 	if len(reminders) == 0 {
-		return "You have no reminders yet. Create one like this:\n" +
+		return ephemeral("You have no reminders yet. Create one like this:\n" +
 			"`/recurring every monday at 10:00 weekly report`\n" +
-			"More examples: `/recurring help`"
+			"More examples: `/recurring help`")
 	}
 
-	// Rendered as a list rather than a table: a table needs an ID column wide
-	// enough for a 16 character string, and any real reminder text pushes it
-	// past the width of a channel on a phone.
-	var b strings.Builder
-	fmt.Fprintf(&b, "**Your reminders** (%d)\n", len(reminders))
-
-	for i, r := range reminders {
-		state := ""
+	attachments := make([]*model.SlackAttachment, 0, len(reminders))
+	for _, r := range reminders {
+		detail := r.Schedule.Describe()
 		if r.Paused {
-			state = " _(paused)_"
+			detail += " · paused"
+		} else {
+			detail += " · next " + p.formatRunAt(r)
 		}
 
-		fmt.Fprintf(&b, "\n**%d.** %s%s\n%s · next %s\n`/recurring delete %s`\n",
-			i+1, escapeInline(r.Message), state, r.Schedule.Describe(), p.formatRunAt(r), r.ID)
+		attachments = append(attachments, &model.SlackAttachment{
+			Text:    "**" + escapeInline(r.Message) + "**\n" + detail,
+			Actions: p.listActions(r),
+		})
 	}
 
-	return b.String()
+	return &model.CommandResponse{
+		ResponseType: model.CommandResponseTypeEphemeral,
+		Text:         fmt.Sprintf("**Your reminders** (%d)", len(reminders)),
+		Attachments:  attachments,
+	}
 }
 
 // deleteReminderText removes one reminder.
