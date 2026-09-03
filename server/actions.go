@@ -26,19 +26,17 @@ const (
 	contextReminderID = "reminder_id"
 	// contextSnoozeMinutes is how long a snooze button defers a reminder for.
 	contextSnoozeMinutes = "snooze_minutes"
-	// contextEphemeral marks a button that lives on an ephemeral post.
-	contextEphemeral = "ephemeral"
 )
 
 // snoozeOptions are the offered delays: fifteen minutes for "not right this
 // second", an hour for "not now". Both defer only the occurrence that just
 // fired, leaving the schedule itself alone.
 var snoozeOptions = []struct {
-	Label   string
-	Minutes int
+	LabelKey string
+	Minutes  int
 }{
-	{"15 min", 15},
-	{"1 hour", 60},
+	{"snooze.15", 15},
+	{"snooze.60", 60},
 }
 
 // actionURL builds the address a button posts back to.
@@ -57,23 +55,20 @@ func actionURL(action string) string {
 // mobile app runs no plugin UI at all: a sidebar is invisible there, and a
 // 16 character ID printed for copying is unusable on a phone. Buttons are the
 // one control surface that works everywhere.
-func (p *Plugin) listActions(r *reminder.Reminder) []*model.PostAction {
+func (p *Plugin) listActions(r *reminder.Reminder, lang reminder.Lang) []*model.PostAction {
 	toggle := &model.PostAction{
 		Id:   "pause",
 		Type: model.PostActionTypeButton,
-		Name: "Pause",
+		Name: msg(lang, "button.pause"),
 		Integration: &model.PostActionIntegration{
-			URL: actionURL("pause"),
-			Context: map[string]any{
-				contextReminderID: r.ID,
-				contextEphemeral:  true,
-			},
+			URL:     actionURL("pause"),
+			Context: map[string]any{contextReminderID: r.ID},
 		},
 	}
 
 	if r.Paused {
 		toggle.Id = "resume"
-		toggle.Name = "Resume"
+		toggle.Name = msg(lang, "button.resume")
 		toggle.Integration.URL = actionURL("resume")
 	}
 
@@ -82,21 +77,18 @@ func (p *Plugin) listActions(r *reminder.Reminder) []*model.PostAction {
 		{
 			Id:    "delete",
 			Type:  model.PostActionTypeButton,
-			Name:  "Delete",
+			Name:  msg(lang, "button.delete"),
 			Style: "danger",
 			Integration: &model.PostActionIntegration{
-				URL: actionURL("delete"),
-				Context: map[string]any{
-					contextReminderID: r.ID,
-					contextEphemeral:  true,
-				},
+				URL:     actionURL("delete"),
+				Context: map[string]any{contextReminderID: r.ID},
 			},
 		},
 	}
 }
 
 // reminderActions builds the buttons attached to a delivered reminder.
-func (p *Plugin) reminderActions(r *reminder.Reminder) []*model.PostAction {
+func (p *Plugin) reminderActions(r *reminder.Reminder, lang reminder.Lang) []*model.PostAction {
 	actions := make([]*model.PostAction, 0, len(snoozeOptions)+1)
 
 	for _, option := range snoozeOptions {
@@ -106,7 +98,7 @@ func (p *Plugin) reminderActions(r *reminder.Reminder) []*model.PostAction {
 			// alphanumerics only. A space 404s, and so does an underscore.
 			Id:   fmt.Sprintf("snooze%dm", option.Minutes),
 			Type: model.PostActionTypeButton,
-			Name: "Snooze " + option.Label,
+			Name: fmt.Sprintf(msg(lang, "button.snooze"), msg(lang, option.LabelKey)),
 			Integration: &model.PostActionIntegration{
 				URL: actionURL("snooze"),
 				Context: map[string]any{
@@ -120,7 +112,7 @@ func (p *Plugin) reminderActions(r *reminder.Reminder) []*model.PostAction {
 	actions = append(actions, &model.PostAction{
 		Id:    "pause",
 		Type:  model.PostActionTypeButton,
-		Name:  "Stop this reminder",
+		Name:  msg(lang, "button.stop"),
 		Style: "danger",
 		Integration: &model.PostActionIntegration{
 			URL: actionURL("pause"),
@@ -151,9 +143,11 @@ func (p *Plugin) decodeAction(w http.ResponseWriter, req *http.Request) (*model.
 	// The lookup is scoped to the header the server sets, not to anything in
 	// the request body, so a forged context naming someone else's reminder
 	// finds nothing.
-	r, err := p.loadOwnReminder(req.Header.Get("Mattermost-User-ID"), reminderID)
+	userID := req.Header.Get("Mattermost-User-ID")
+
+	r, err := p.loadOwnReminder(userID, reminderID)
 	if err != nil {
-		p.respondToAction(w, &request, actionFailureText(err))
+		p.respondToAction(w, &request, p.actionFailureText(userID, err))
 		return nil, nil, false
 	}
 
@@ -189,7 +183,9 @@ func (p *Plugin) handleSnooze(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	p.respondToAction(w, request, "⏰ **"+escapeInline(r.Message)+"**\n_snoozed until "+p.formatRunAt(r)+"_")
+	lang := p.langFor(r.UserID)
+	p.respondToAction(w, request,
+		fmt.Sprintf(msg(lang, "action.snoozed"), escapeInline(r.Message), p.formatRunAt(r, lang)))
 }
 
 // handlePause stops a reminder.
@@ -209,8 +205,9 @@ func (p *Plugin) handlePause(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	lang := p.langFor(r.UserID)
 	p.respondToAction(w, request,
-		"⏰ **"+escapeInline(r.Message)+"**\n_paused · resume it with_ `/recurring resume "+r.ID+"`")
+		fmt.Sprintf(msg(lang, "action.paused"), escapeInline(r.Message), r.ID))
 }
 
 // handleResume starts a paused reminder again.
@@ -233,8 +230,9 @@ func (p *Plugin) handleResume(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	lang := p.langFor(r.UserID)
 	p.respondToAction(w, request,
-		"⏰ **"+escapeInline(r.Message)+"**\n_resumed · next "+p.formatRunAt(r)+"_")
+		fmt.Sprintf(msg(lang, "action.resumed"), escapeInline(r.Message), p.formatRunAt(r, lang)))
 }
 
 // handleDelete removes a reminder.
@@ -250,7 +248,8 @@ func (p *Plugin) handleDelete(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	p.respondToAction(w, request, "~~"+escapeInline(r.Message)+"~~ _deleted_")
+	p.respondToAction(w, request,
+		fmt.Sprintf(msg(p.langFor(r.UserID), "action.deleted"), escapeInline(r.Message)))
 }
 
 // loadOwnReminder fetches a reminder belonging to the given user.
@@ -272,57 +271,41 @@ func (p *Plugin) loadOwnReminder(userID, reminderID string) (*reminder.Reminder,
 }
 
 // actionFailureText explains a failed action to the person who pressed it.
-func actionFailureText(err error) string {
+func (p *Plugin) actionFailureText(userID string, err error) string {
+	lang := p.langFor(userID)
+
 	if errors.Is(err, reminder.ErrNotFound) {
-		return "That reminder is gone — it looks like it was already deleted."
+		return msg(lang, "action.gone")
 	}
 
-	return "Something went wrong. Please try again."
+	return msg(lang, "failed")
 }
 
 // respondToAction rewrites the post the button sits on, so that pressing it
 // leaves the outcome behind rather than a live button.
 //
-// Which mechanism does that depends on the post. An ephemeral post — the reply
-// to /recurring list — exists only in the reader's client, so asking the server
-// to update it by ID fails with "Post not found"; those have to go back through
-// UpdateEphemeralPost. A delivered reminder is a real post and takes the
-// ordinary Update.
+// Every post carrying our buttons is a real one — both the delivered reminder
+// and the list sent to the bot DM — so updating by ID is enough. If a button is
+// ever put on an ephemeral post, this will not work: an ephemeral post exists
+// only in the reader's client, the update fails with "Post not found", and the
+// action silently succeeds while the message never changes. Such a post has to
+// be rewritten with Post.UpdateEphemeralPost instead.
 func (p *Plugin) respondToAction(w http.ResponseWriter, request *model.PostActionIntegrationRequest, message string) {
-	response := &model.PostActionIntegrationResponse{}
-
-	if isEphemeral(request) {
-		post := &model.Post{
-			Id:        request.PostId,
-			ChannelId: request.ChannelId,
-			UserId:    request.UserId,
-			Message:   message,
-		}
-		// Dropping the attachments removes the buttons.
-		post.AddProp("attachments", nil)
-
-		p.client.Post.UpdateEphemeralPost(request.UserId, post)
-	} else {
-		response.Update = &model.Post{
+	response := &model.PostActionIntegrationResponse{
+		Update: &model.Post{
 			Id:      request.PostId,
 			Message: message,
 			Props: map[string]any{
+				// Dropping the attachments removes the buttons.
 				"attachments": nil,
 			},
-		}
+		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		p.client.Log.Error("Failed to write an action response", "err", err)
 	}
-}
-
-// isEphemeral reports whether the button sits on an ephemeral post.
-func isEphemeral(request *model.PostActionIntegrationRequest) bool {
-	ephemeral, ok := request.Context[contextEphemeral].(bool)
-
-	return ok && ephemeral
 }
 
 // contextInt reads a number out of an action context. Values arrive as JSON, so

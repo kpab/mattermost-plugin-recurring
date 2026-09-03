@@ -288,9 +288,38 @@ func atoi(s string) int {
 	return n
 }
 
-// Describe renders the schedule back into English, for confirming what was
+// Lang is the language to render a schedule in.
+type Lang string
+
+const (
+	// LangEN renders in English.
+	LangEN Lang = "en"
+	// LangJA renders in Japanese.
+	LangJA Lang = "ja"
+)
+
+// japaneseWeekdayNames renders a weekday the way a Japanese reader expects it.
+var japaneseWeekdayNames = map[time.Weekday]string{
+	time.Sunday:    "日",
+	time.Monday:    "月",
+	time.Tuesday:   "火",
+	time.Wednesday: "水",
+	time.Thursday:  "木",
+	time.Friday:    "金",
+	time.Saturday:  "土",
+}
+
+// Describe renders the schedule back into words, for confirming what was
 // understood and for listing reminders.
-func (s Schedule) Describe() string {
+func (s Schedule) Describe(lang Lang) string {
+	if lang == LangJA {
+		return s.describeJA()
+	}
+
+	return s.describeEN()
+}
+
+func (s Schedule) describeEN() string {
 	at := fmt.Sprintf("%02d:%02d", s.At.Hour, s.At.Minute)
 
 	switch s.Kind {
@@ -310,6 +339,29 @@ func (s Schedule) Describe() string {
 		return fmt.Sprintf("on the %s of every month at %s", ordinal(s.DayOfMonth), at)
 	default:
 		return "unknown schedule"
+	}
+}
+
+func (s Schedule) describeJA() string {
+	at := fmt.Sprintf("%d:%02d", s.At.Hour, s.At.Minute)
+
+	switch s.Kind {
+	case KindOnce:
+		return time.UnixMilli(s.OnceAt).UTC().Format("2006-01-02 15:04 MST") + "に一度"
+	case KindDaily:
+		return "毎日 " + at + " に"
+	case KindWeekdays:
+		return "平日 " + at + " に"
+	case KindWeekly:
+		days := make([]string, 0, len(s.Weekdays))
+		for _, d := range s.Weekdays {
+			days = append(days, japaneseWeekdayNames[d]+"曜")
+		}
+		return "毎週" + strings.Join(days, "・") + " " + at + " に"
+	case KindMonthly:
+		return fmt.Sprintf("毎月%d日 %s に", s.DayOfMonth, at)
+	default:
+		return "不明なスケジュール"
 	}
 }
 

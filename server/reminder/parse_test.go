@@ -246,7 +246,7 @@ func TestDescribe(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tc.want, tc.schedule.Describe())
+			assert.Equal(t, tc.want, tc.schedule.Describe(LangEN))
 		})
 	}
 }
@@ -262,7 +262,7 @@ func TestParsedSchedulesAllDescribe(t *testing.T) {
 	} {
 		schedule, _, err := ParseRecurring(input)
 		require.NoError(t, err)
-		assert.NotEqual(t, "unknown schedule", schedule.Describe())
+		assert.NotEqual(t, "unknown schedule", schedule.Describe(LangEN))
 	}
 }
 

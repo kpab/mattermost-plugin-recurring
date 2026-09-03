@@ -118,12 +118,12 @@ func TestFormatRunAt(t *testing.T) {
 		r := at(48 * time.Hour)
 		r.Paused = true
 
-		assert.Equal(t, "paused", p.formatRunAt(r),
+		assert.Equal(t, "paused", p.formatRunAt(r, reminder.LangEN),
 			"showing a next run for a paused reminder contradicts the pause")
 	})
 
 	t.Run("a spent reminder says so", func(t *testing.T) {
-		assert.Equal(t, "never again", p.formatRunAt(&reminder.Reminder{Timezone: "Asia/Tokyo"}))
+		assert.Equal(t, "never again", p.formatRunAt(&reminder.Reminder{Timezone: "Asia/Tokyo"}, reminder.LangEN))
 	})
 
 	t.Run("near dates are named", func(t *testing.T) {
@@ -131,15 +131,15 @@ func TestFormatRunAt(t *testing.T) {
 		noon := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, tokyo)
 
 		today := &reminder.Reminder{Timezone: "Asia/Tokyo", NextRunAt: noon.Add(time.Hour).UnixMilli()}
-		assert.Contains(t, p.formatRunAt(today), "Today at")
+		assert.Contains(t, p.formatRunAt(today, reminder.LangEN), "Today at")
 
 		tomorrow := &reminder.Reminder{Timezone: "Asia/Tokyo", NextRunAt: noon.AddDate(0, 0, 1).UnixMilli()}
-		assert.Contains(t, p.formatRunAt(tomorrow), "Tomorrow at")
+		assert.Contains(t, p.formatRunAt(tomorrow, reminder.LangEN), "Tomorrow at")
 	})
 
 	t.Run("the timezone is always shown", func(t *testing.T) {
 		// It is how a user notices a reminder drifted across a DST change.
-		assert.Contains(t, p.formatRunAt(at(3*time.Hour)), "JST")
+		assert.Contains(t, p.formatRunAt(at(3*time.Hour), reminder.LangEN), "JST")
 	})
 }
 

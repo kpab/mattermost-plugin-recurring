@@ -15,7 +15,7 @@ import (
 
 const commandTrigger = "recurring"
 
-const commandHelp = "**Recurring Reminders** — reminders that repeat. Say when, then what.\n" + `
+const commandHelpEN = "**Recurring Reminders** — reminders that repeat. Say when, then what.\n" + `
 Most used:
 * ` + "`/recurring daily 9:00 stand-up`" + `
 * ` + "`/recurring weekdays 18:00 log off`" + `
@@ -29,10 +29,25 @@ Manage them:
 * ` + "`/recurring pause <id>`" + ` / ` + "`/recurring resume <id>`" + ` — stop and start one
 * ` + "`/recurring delete <id>`" + ` — remove one
 
-Japanese input works too:
-* ` + "`/recurring 毎朝9時 ストレッチ`" + `
+Japanese input also works:
+* ` + "`/recurring 毎朝9時 ストレッチ`" + ``
+
+const commandHelpJA = "**繰り返しリマインダー** — 周期・時刻・本文の順に書きます。\n" + `
+よく使う形:
+* ` + "`/recurring 毎日 9:00 朝会`" + `
+* ` + "`/recurring 平日 18:00 退勤`" + `
 * ` + "`/recurring 毎週月曜 10:00 週次報告`" + `
-_(replies are in English for now)_`
+* ` + "`/recurring 毎月1日 9:00 経費精算`" + `
+
+時刻は ` + "`10:00`" + `、` + "`9時`" + `、` + "`9時半`" + `、` + "`18:30`" + ` のように書けます。
+
+管理:
+* ` + "`/recurring list`" + ` — 一覧を表示(ボタンで停止・削除できます)
+* ` + "`/recurring pause <id>`" + ` / ` + "`/recurring resume <id>`" + ` — 停止と再開
+* ` + "`/recurring delete <id>`" + ` — 削除
+
+英語でも書けます:
+* ` + "`/recurring every monday at 10:00 weekly report`" + ``
 
 // buildAutocomplete describes /recurring to the autocomplete UI.
 //
@@ -131,7 +146,7 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 	case subcommandHelp:
 		return ephemeral(p.helpText(args.UserId)), nil
 	case subcommandList:
-		return p.listRemindersResponse(args.UserId), nil
+		return p.listRemindersResponse(args.UserId, args.ChannelId), nil
 	case subcommandDelete:
 		return ephemeral(p.deleteReminderText(args.UserId, arg)), nil
 	case subcommandPause:
@@ -148,19 +163,28 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 // helpText is the command help, with the reader's own timezone filled in so
 // they can see up front which clock their reminders will follow.
 func (p *Plugin) helpText(userID string) string {
-	timezone, err := p.userTimezone(userID)
-	if err != nil {
-		return commandHelp + "\n\nReminders arrive as a direct message, in your own timezone."
+	lang := p.langFor(userID)
+
+	help := commandHelpEN
+	if lang == reminder.LangJA {
+		help = commandHelpJA
 	}
 
-	return fmt.Sprintf("%s\n\nReminders arrive as a direct message, in your own timezone (%s).", commandHelp, timezone)
+	timezone, err := p.userTimezone(userID)
+	if err != nil {
+		return fmt.Sprintf(msg(lang, "help.timezoneUnknown"), help)
+	}
+
+	return fmt.Sprintf(msg(lang, "help.timezone"), help, timezone)
 }
 
 // createReminderText parses the input, stores the reminder and queues it.
 func (p *Plugin) createReminderText(userID, input string) string {
+	lang := p.langFor(userID)
+
 	schedule, message, err := reminder.ParseRecurring(input)
 	if err != nil {
-		return fmt.Sprintf("%s\n\nTry `/recurring help` for examples.", capitalise(err.Error()))
+		return fmt.Sprintf(msg(lang, "parse.retry"), parseErrorText(lang, err))
 	}
 
 	timezone, err := p.userTimezone(userID)
@@ -181,111 +205,161 @@ func (p *Plugin) createReminderText(userID, input string) string {
 	}
 
 	if !r.Advance(now) {
-		return "That reminder would never fire."
+		return msg(lang, "created.never")
 	}
 
 	if err := p.kvstore.SaveReminder(r); err != nil {
 		if errors.Is(err, reminder.ErrTooManyReminders) {
-			return capitalise(reminder.ErrTooManyReminders.Error()) +
-				". Delete one with `/recurring delete <id>`, then try again."
+			return capitalise(reminder.ErrTooManyReminders.Error()) + msg(lang, "created.tooMany")
 		}
 		p.client.Log.Error("Failed to save a reminder", "user_id", userID, "err", err)
-		return "Something went wrong saving that reminder. Please try again."
+		return msg(lang, "created.failed")
 	}
 
-	return fmt.Sprintf("Got it — I'll remind you **%s** %s.\nNext: **%s**\nTo cancel: `/recurring delete %s`",
-		r.Message, r.Schedule.Describe(), p.formatRunAt(r), r.ID)
+	return fmt.Sprintf(msg(lang, "created"),
+		r.Message, r.Schedule.Describe(lang), p.formatRunAt(r, lang), r.ID)
 }
 
-// listRemindersResponse renders the user's reminders, one attachment each so
-// that every reminder carries its own buttons.
+// parseErrorText translates the parse failures worth translating.
+//
+// The three sentinels cover every way of getting the shape of the input wrong,
+// which is what a first-time user runs into. The remaining errors are built
+// around the offending text ("`25:00` isn't a valid time") and stay in English:
+// translating them means restructuring them into typed values, and they are
+// only reached by someone who already got the shape right.
+func parseErrorText(lang reminder.Lang, err error) string {
+	switch {
+	case errors.Is(err, reminder.ErrNoSchedule):
+		return msg(lang, "parse.noSchedule")
+	case errors.Is(err, reminder.ErrNoTime):
+		return msg(lang, "parse.noTime")
+	case errors.Is(err, reminder.ErrNoMessage):
+		return msg(lang, "parse.noMessage")
+	default:
+		return capitalise(err.Error())
+	}
+}
+
+// listRemindersResponse sends the user's reminders to their bot DM, one
+// attachment each so that every reminder carries its own buttons.
 //
 // Buttons rather than printed IDs, because the mobile app runs no plugin UI:
 // there is no sidebar there to click, and copying a 16 character ID on a phone
 // to paste into a second command is not a workflow anyone will use twice.
-func (p *Plugin) listRemindersResponse(userID string) *model.CommandResponse {
+//
+// The list goes to the DM rather than coming back as an ephemeral reply because
+// an ephemeral post vanishes when it is dismissed or the client reloads, taking
+// the buttons with it. In the DM it stays, next to the reminders themselves.
+func (p *Plugin) listRemindersResponse(userID, channelID string) *model.CommandResponse {
+	lang := p.langFor(userID)
+
 	reminders, err := p.kvstore.GetReminders(userID)
 	if err != nil {
 		p.client.Log.Error("Failed to list reminders", "user_id", userID, "err", err)
-		return ephemeral("Something went wrong reading your reminders. Please try again.")
+		return ephemeral(msg(lang, "list.failed"))
 	}
 
 	if len(reminders) == 0 {
-		return ephemeral("You have no reminders yet. Create one like this:\n" +
-			"`/recurring every monday at 10:00 weekly report`\n" +
-			"More examples: `/recurring help`")
+		// Nothing to keep around, so an ephemeral reply is the lighter answer.
+		return ephemeral(msg(lang, "list.empty"))
 	}
 
 	attachments := make([]*model.SlackAttachment, 0, len(reminders))
 	for _, r := range reminders {
-		detail := r.Schedule.Describe()
+		detail := r.Schedule.Describe(lang)
 		if r.Paused {
-			detail += " · paused"
+			detail += " · " + msg(lang, "state.paused")
 		} else {
-			detail += " · next " + p.formatRunAt(r)
+			detail += " · " + fmt.Sprintf(msg(lang, "next"), p.formatRunAt(r, lang))
 		}
 
 		attachments = append(attachments, &model.SlackAttachment{
 			Text:    "**" + escapeInline(r.Message) + "**\n" + detail,
-			Actions: p.listActions(r),
+			Actions: p.listActions(r, lang),
 		})
 	}
 
-	return &model.CommandResponse{
-		ResponseType: model.CommandResponseTypeEphemeral,
-		Text:         fmt.Sprintf("**Your reminders** (%d)", len(reminders)),
-		Attachments:  attachments,
+	post := &model.Post{
+		Message: fmt.Sprintf(msg(lang, "list.title"), len(reminders)),
 	}
+	model.ParseSlackAttachment(post, attachments)
+
+	if err := p.client.Post.DM(p.botUserID, userID, post); err != nil {
+		p.client.Log.Error("Failed to send the reminder list", "user_id", userID, "err", err)
+		return ephemeral(msg(lang, "list.sendFailed"))
+	}
+
+	// Saying "sent to your DM" inside that very DM is noise.
+	if p.isBotDM(userID, channelID) {
+		return &model.CommandResponse{}
+	}
+
+	return ephemeral(msg(lang, "list.sent"))
+}
+
+// isBotDM reports whether the channel is the user's DM with the plugin's bot.
+func (p *Plugin) isBotDM(userID, channelID string) bool {
+	channel, err := p.client.Channel.Get(channelID)
+	if err != nil {
+		return false
+	}
+
+	return channel.Type == model.ChannelTypeDirect &&
+		channel.Name == model.GetDMNameFromIds(p.botUserID, userID)
 }
 
 // deleteReminderText removes one reminder.
 func (p *Plugin) deleteReminderText(userID, reminderID string) string {
+	lang := p.langFor(userID)
+
 	if reminderID == "" {
-		return "Which one? Use `/recurring list` to see your reminders — each one comes with the command to remove it."
+		return msg(lang, "delete.which")
 	}
 
 	r, err := p.kvstore.GetReminder(userID, reminderID)
 	if err != nil {
 		if errors.Is(err, reminder.ErrNotFound) {
-			return fmt.Sprintf("No reminder with ID `%s`. Use `/recurring list` to see yours.", reminderID)
+			return fmt.Sprintf(msg(lang, "notFound"), reminderID)
 		}
 		p.client.Log.Error("Failed to look up a reminder for deletion", "user_id", userID, "err", err)
-		return "Something went wrong. Please try again."
+		return msg(lang, "failed")
 	}
 
 	if err := p.kvstore.DeleteReminder(userID, reminderID); err != nil {
 		p.client.Log.Error("Failed to delete a reminder", "user_id", userID, "reminder_id", reminderID, "err", err)
-		return "Something went wrong deleting that reminder. Please try again."
+		return msg(lang, "failed")
 	}
 
-	return fmt.Sprintf("Deleted **%s**.", r.Message)
+	return fmt.Sprintf(msg(lang, "deleted"), r.Message)
 }
 
 // setPausedText pauses or resumes a reminder.
 func (p *Plugin) setPausedText(userID, reminderID string, paused bool) string {
+	lang := p.langFor(userID)
+
 	verb := "resume"
 	if paused {
 		verb = "pause"
 	}
 
 	if reminderID == "" {
-		return fmt.Sprintf("Which one? Use `/recurring list` to see your reminders, then `/recurring %s <id>`.", verb)
+		return fmt.Sprintf(msg(lang, "which"), verb)
 	}
 
 	r, err := p.kvstore.GetReminder(userID, reminderID)
 	if err != nil {
 		if errors.Is(err, reminder.ErrNotFound) {
-			return fmt.Sprintf("No reminder with ID `%s`. Use `/recurring list` to see yours.", reminderID)
+			return fmt.Sprintf(msg(lang, "notFound"), reminderID)
 		}
 		p.client.Log.Error("Failed to look up a reminder", "user_id", userID, "err", err)
-		return "Something went wrong. Please try again."
+		return msg(lang, "failed")
 	}
 
 	if r.Paused == paused {
 		if paused {
-			return fmt.Sprintf("**%s** is already paused. Resume it with `/recurring resume %s`.", escapeInline(r.Message), r.ID)
+			return fmt.Sprintf(msg(lang, "paused.already"), escapeInline(r.Message), r.ID)
 		}
-		return fmt.Sprintf("**%s** is already running. Next: **%s**", escapeInline(r.Message), p.formatRunAt(r))
+		return fmt.Sprintf(msg(lang, "resumed.already"), escapeInline(r.Message), p.formatRunAt(r, lang))
 	}
 
 	now := time.Now()
@@ -299,14 +373,14 @@ func (p *Plugin) setPausedText(userID, reminderID string, paused bool) string {
 
 	if err := p.kvstore.UpdateReminder(r); err != nil {
 		p.client.Log.Error("Failed to pause or resume a reminder", "user_id", userID, "reminder_id", reminderID, "err", err)
-		return "Something went wrong. Please try again."
+		return msg(lang, "failed")
 	}
 
 	if paused {
-		return fmt.Sprintf("Paused **%s**. Resume it with `/recurring resume %s`.", escapeInline(r.Message), r.ID)
+		return fmt.Sprintf(msg(lang, "paused"), escapeInline(r.Message), r.ID)
 	}
 
-	return fmt.Sprintf("Resumed **%s**. Next: **%s**", escapeInline(r.Message), p.formatRunAt(r))
+	return fmt.Sprintf(msg(lang, "resumed"), escapeInline(r.Message), p.formatRunAt(r, lang))
 }
 
 // userTimezone returns the IANA timezone the user has set in Mattermost.
@@ -334,21 +408,36 @@ func (p *Plugin) userTimezone(userID string) (string, error) {
 // "Thu, 4 Sep at 09:00", and the next firing is usually near. The zone
 // abbreviation always stays — it is how a user spots that a reminder is an hour
 // off after a daylight-saving change.
-func (p *Plugin) formatRunAt(r *reminder.Reminder) string {
+func (p *Plugin) formatRunAt(r *reminder.Reminder, lang reminder.Lang) string {
 	if r.Paused {
-		return "paused"
+		return msg(lang, "state.paused")
 	}
 	if r.NextRunAt == 0 {
-		return "never again"
+		return msg(lang, "state.never")
 	}
 
 	loc := r.Location()
 	next := time.UnixMilli(r.NextRunAt).In(loc)
-	clock := next.Format("15:04 MST")
-
 	today := time.Now().In(loc)
 	daysAway := daysBetween(today, next)
 
+	if lang == reminder.LangJA {
+		clock := next.Format("15:04 MST")
+		switch {
+		case daysAway == 0:
+			return "今日 " + clock
+		case daysAway == 1:
+			return "明日 " + clock
+		case daysAway < 7:
+			return japaneseWeekday(next) + "曜 " + clock
+		case next.Year() == today.Year():
+			return next.Format("1月2日") + " " + clock
+		default:
+			return next.Format("2006年1月2日") + " " + clock
+		}
+	}
+
+	clock := next.Format("15:04 MST")
 	switch {
 	case daysAway == 0:
 		return "Today at " + clock
@@ -361,6 +450,11 @@ func (p *Plugin) formatRunAt(r *reminder.Reminder) string {
 	default:
 		return next.Format("Mon, 2 Jan 2006") + " at " + clock
 	}
+}
+
+// japaneseWeekday renders the weekday character for a time.
+func japaneseWeekday(t time.Time) string {
+	return [...]string{"日", "月", "火", "水", "木", "金", "土"}[int(t.Weekday())]
 }
 
 // daysBetween counts calendar days from one local time to another.

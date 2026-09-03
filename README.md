@@ -7,6 +7,7 @@
 Mattermost's built-in message reminder fires once. This one keeps going.
 
 - **Daily, weekdays, weekly, or monthly**, written in plain English or Japanese
+- **Replies in your language** — English or Japanese, following your Mattermost setting
 - **Delivered by direct message** in your own timezone, and correct across
   daylight-saving changes
 - **Snooze or stop** a reminder from the message itself, without retyping anything
@@ -27,7 +28,7 @@ Mattermost's built-in message reminder fires once. This one keeps going.
 
 Times can be `10:00`, `9am`, `6:30pm`, or `at 9`.
 
-Japanese input works too — the replies come back in English for now:
+Japanese input works too, and replies follow your Mattermost language setting:
 
 ```
 /recurring 毎朝9時 ストレッチ
@@ -113,7 +114,6 @@ Not built yet:
 - One-off reminders ("in 30 minutes") — for now, use Mattermost's built-in
   **Remind me about this** on a message
 - Several weekdays in one reminder ("every Monday and Thursday")
-- Japanese replies (Japanese input already works; the replies come back in English)
 
 ## Why not Slack, Google Calendar, or Todoist?
 

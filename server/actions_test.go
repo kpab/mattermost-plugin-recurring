@@ -163,7 +163,7 @@ func TestReminderActionsPointAtRegisteredRoutes(t *testing.T) {
 	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
 	require.NoError(t, tp.store.SaveReminder(r))
 
-	actions := tp.reminderActions(r)
+	actions := tp.reminderActions(r, reminder.LangEN)
 	require.NotEmpty(t, actions)
 
 	for _, action := range actions {
@@ -196,7 +196,7 @@ func TestActionIDsAreAlphanumeric(t *testing.T) {
 	alphanumeric := regexp.MustCompile(`^[A-Za-z0-9]+$`)
 	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
 
-	for _, action := range tp.reminderActions(r) {
+	for _, action := range tp.reminderActions(r, reminder.LangEN) {
 		t.Run(action.Id, func(t *testing.T) {
 			require.NotEmpty(t, action.Id)
 			assert.Regexp(t, alphanumeric, action.Id,
@@ -214,7 +214,7 @@ func TestActionURLsCarryThePluginPath(t *testing.T) {
 
 	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
 
-	for _, action := range tp.reminderActions(r) {
+	for _, action := range tp.reminderActions(r, reminder.LangEN) {
 		require.NotNil(t, action.Integration)
 		assert.True(t, strings.HasPrefix(action.Integration.URL, "/plugins/"+manifest.Id+"/"),
 			"button %q posts to %q, which does not name the plugin", action.Name, action.Integration.URL)
@@ -228,7 +228,7 @@ func TestActionIDsAreUnique(t *testing.T) {
 	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
 
 	seen := map[string]bool{}
-	for _, action := range tp.reminderActions(r) {
+	for _, action := range tp.reminderActions(r, reminder.LangEN) {
 		require.False(t, seen[action.Id], "duplicate action ID %q", action.Id)
 		seen[action.Id] = true
 	}
@@ -247,7 +247,7 @@ func TestListActionsAreAlphanumericAndPointAtRoutes(t *testing.T) {
 		r.Paused = paused
 		require.NoError(t, tp.store.SaveReminder(r))
 
-		for _, action := range tp.listActions(r) {
+		for _, action := range tp.listActions(r, reminder.LangEN) {
 			require.NotNil(t, action.Integration)
 			assert.Regexp(t, alphanumeric, action.Id)
 			assert.True(t, strings.HasPrefix(action.Integration.URL, "/plugins/"+manifest.Id+"/"))
@@ -273,11 +273,11 @@ func TestListActionsToggleWithState(t *testing.T) {
 	tp := newTestPlugin(t)
 
 	running := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
-	assert.Equal(t, "Pause", tp.listActions(running)[0].Name)
+	assert.Equal(t, "Pause", tp.listActions(running, reminder.LangEN)[0].Name)
 
 	paused := running.Clone()
 	paused.Paused = true
-	assert.Equal(t, "Resume", tp.listActions(paused)[0].Name)
+	assert.Equal(t, "Resume", tp.listActions(paused, reminder.LangEN)[0].Name)
 }
 
 func TestResumeAction(t *testing.T) {
@@ -329,43 +329,23 @@ func TestResumeAndDeleteCannotReachAnotherUsersReminder(t *testing.T) {
 	}
 }
 
-// The reply to /recurring list is an ephemeral post, which exists only in the
-// reader's client. Asking the server to update it by ID fails with "Post not
-// found", so those buttons have to answer through UpdateEphemeralPost instead —
-// otherwise the action runs but the card never changes.
-func TestEphemeralActionsUpdateThroughTheEphemeralAPI(t *testing.T) {
+// Pressing a button has to leave the outcome behind in place of the button.
+// Both the delivered reminder and the list in the bot DM are real posts, so the
+// response updates them by ID.
+func TestActionsUpdateThePostInPlace(t *testing.T) {
 	tp := newTestPlugin(t)
 
 	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
 	require.NoError(t, tp.store.SaveReminder(r))
 
-	// The list's own buttons carry the ephemeral marker.
-	action := tp.listActions(r)[0]
-	w := postAction(t, tp, "/pause", "user1", action.Integration.Context)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	require.Len(t, tp.api.updatedEphemeral, 1, "an ephemeral card must be rewritten through UpdateEphemeralPost")
-	assert.Contains(t, tp.api.updatedEphemeral[0].Message, "paused")
-
-	// And the response must not also ask the server to update a real post.
-	var response model.PostActionIntegrationResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-	assert.Nil(t, response.Update, "an ephemeral post cannot be updated by ID")
-}
-
-// A delivered reminder is a real post, and takes the ordinary update.
-func TestDeliveredMessageActionsUpdateThePostByID(t *testing.T) {
-	tp := newTestPlugin(t)
-
-	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
-	require.NoError(t, tp.store.SaveReminder(r))
-
-	action := tp.reminderActions(r)[0]
-	w := postAction(t, tp, "/snooze", "user1", action.Integration.Context)
+	w := postAction(t, tp, "/pause", "user1", map[string]any{contextReminderID: "r1"})
 	require.Equal(t, http.StatusOK, w.Code)
 
 	var response model.PostActionIntegrationResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
-	require.NotNil(t, response.Update, "a real post is updated by ID")
-	assert.Empty(t, tp.api.updatedEphemeral)
+
+	require.NotNil(t, response.Update)
+	assert.Contains(t, response.Update.Message, "paused")
+	// Clearing the attachments is what removes the buttons.
+	assert.Nil(t, response.Update.Props["attachments"])
 }

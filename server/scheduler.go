@@ -151,7 +151,7 @@ func (p *Plugin) sendReminder(r *reminder.Reminder) error {
 	// Snooze and stop live on the message itself: this is the one moment the
 	// reader has the reminder in front of them.
 	model.ParseSlackAttachment(post, []*model.SlackAttachment{{
-		Actions: p.reminderActions(r),
+		Actions: p.reminderActions(r, p.langFor(r.UserID)),
 	}})
 
 	if err := p.client.Post.DM(p.botUserID, r.UserID, post); err != nil {
@@ -169,15 +169,17 @@ func (p *Plugin) sendReminder(r *reminder.Reminder) error {
 // formatRunAt so that it reads the same here as in /recurring list — the two
 // drifted apart once, when this built its own timestamp.
 func (p *Plugin) reminderMessage(r *reminder.Reminder, now time.Time) string {
-	detail := r.Schedule.Describe()
+	lang := p.langFor(r.UserID)
+
+	detail := r.Schedule.Describe(lang)
 
 	// r still carries the run that is firing now, so the preview needs the one
 	// after it.
 	if next, ok := r.NextRun(now); ok {
 		preview := r.Clone()
 		preview.NextRunAt = next.UnixMilli()
-		detail += " · next " + p.formatRunAt(preview)
+		detail += " · " + fmt.Sprintf(msg(lang, "next"), p.formatRunAt(preview, lang))
 	}
 
-	return fmt.Sprintf("⏰ **%s**\n_%s_", r.Message, detail)
+	return fmt.Sprintf(msg(lang, "delivered"), r.Message, detail)
 }

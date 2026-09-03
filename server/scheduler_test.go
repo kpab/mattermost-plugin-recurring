@@ -110,8 +110,10 @@ func (s *fakeStore) ListUserIDs() ([]string, error) {
 type silentAPI struct {
 	plugintest.API
 
-	// updatedEphemeral records the posts the code asked to rewrite in place.
-	updatedEphemeral []*model.Post
+	// locale is what GetUser reports, which is what decides the reply language.
+	locale string
+	// timezone is the user's configured timezone.
+	timezone string
 }
 
 func (a *silentAPI) LogError(string, ...any) {}
@@ -119,9 +121,16 @@ func (a *silentAPI) LogWarn(string, ...any)  {}
 func (a *silentAPI) LogInfo(string, ...any)  {}
 func (a *silentAPI) LogDebug(string, ...any) {}
 
-func (a *silentAPI) UpdateEphemeralPost(_ string, post *model.Post) *model.Post {
-	a.updatedEphemeral = append(a.updatedEphemeral, post)
-	return post
+func (a *silentAPI) GetUser(userID string) (*model.User, *model.AppError) {
+	user := &model.User{Id: userID, Locale: a.locale}
+	if a.timezone != "" {
+		user.Timezone = map[string]string{
+			"useAutomaticTimezone": "false",
+			"manualTimezone":       a.timezone,
+		}
+	}
+
+	return user, nil
 }
 
 // testPlugin wires a Plugin to fakes, capturing what it would have sent.
@@ -138,7 +147,7 @@ func newTestPlugin(t *testing.T) *testPlugin {
 	t.Helper()
 
 	store := newFakeStore()
-	api := &silentAPI{}
+	api := &silentAPI{locale: "en"}
 	tp := &testPlugin{
 		Plugin: &Plugin{
 			kvstore: store,
@@ -391,6 +400,6 @@ func TestReminderMessage(t *testing.T) {
 	require.True(t, ok)
 	preview.NextRunAt = next.UnixMilli()
 
-	assert.Contains(t, got, "next "+tp.formatRunAt(preview),
+	assert.Contains(t, got, "next "+tp.formatRunAt(preview, reminder.LangEN),
 		"the next run must read exactly as it does in /recurring list")
 }

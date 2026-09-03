@@ -36,9 +36,11 @@ func (p *Plugin) handleGetReminders(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	lang := p.langFor(userID)
+
 	response := remindersResponse{Reminders: make([]reminderView, 0, len(reminders))}
 	for _, r := range reminders {
-		response.Reminders = append(response.Reminders, p.viewOf(r))
+		response.Reminders = append(response.Reminders, p.viewOf(r, lang))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -48,12 +50,12 @@ func (p *Plugin) handleGetReminders(w http.ResponseWriter, req *http.Request) {
 }
 
 // viewOf renders a reminder for the sidebar.
-func (p *Plugin) viewOf(r *reminder.Reminder) reminderView {
+func (p *Plugin) viewOf(r *reminder.Reminder, lang reminder.Lang) reminderView {
 	return reminderView{
 		ID:       r.ID,
 		Message:  r.Message,
-		Schedule: r.Schedule.Describe(),
-		NextRun:  p.formatRunAt(r),
+		Schedule: r.Schedule.Describe(lang),
+		NextRun:  p.formatRunAt(r, lang),
 		Paused:   r.Paused,
 	}
 }
