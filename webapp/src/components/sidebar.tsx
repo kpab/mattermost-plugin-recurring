@@ -1,7 +1,6 @@
 import React, {useCallback, useEffect, useState} from 'react';
 
-import {fetchReminders} from '../client';
-import type {Reminder} from '../client';
+import {fetchReminders, type Reminder} from '../client';
 
 // Styles are inline objects rather than a stylesheet: the sidebar renders
 // inside the host app, and a plugin's global CSS can only ever fight with it.
