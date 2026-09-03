@@ -19,9 +19,8 @@ import (
 // different command's output.
 
 const (
-	// actionPath is where the buttons post back to. Relative to
-	// /plugins/<plugin id>/, which is how Mattermost resolves plugin actions.
-	actionPath = "/api/v1/actions"
+	// actionPathPrefix is the plugin-relative part of the callback path.
+	actionPathPrefix = "/api/v1/actions"
 
 	// contextReminderID names the reminder a button belongs to.
 	contextReminderID = "reminder_id"
@@ -40,21 +39,30 @@ var snoozeOptions = []struct {
 	{"1 hour", 60},
 }
 
+// actionURL builds the address a button posts back to.
+//
+// It has to carry the full plugin path from the site root. The field's own
+// documentation calls a plugin URL "a relative path", but the server feeds the
+// value straight to an HTTP client, so a bare "/api/v1/..." fails with
+// "unsupported protocol scheme".
+func actionURL(action string) string {
+	return "/plugins/" + manifest.Id + actionPathPrefix + "/" + action
+}
+
 // reminderActions builds the buttons attached to a delivered reminder.
 func (p *Plugin) reminderActions(r *reminder.Reminder) []*model.PostAction {
 	actions := make([]*model.PostAction, 0, len(snoozeOptions)+1)
 
 	for _, option := range snoozeOptions {
 		actions = append(actions, &model.PostAction{
-			// Mattermost puts this ID straight into the callback path
-			// (/api/v4/posts/<id>/actions/<action id>), so it has to be
-			// URL-safe. Building it from the label put a space in it and every
-			// press 404'd.
-			Id:   fmt.Sprintf("snooze_%dm", option.Minutes),
+			// Mattermost puts this ID straight into its own callback route
+			// (/api/v4/posts/<id>/actions/<action id>), which matches on
+			// alphanumerics only. A space 404s, and so does an underscore.
+			Id:   fmt.Sprintf("snooze%dm", option.Minutes),
 			Type: model.PostActionTypeButton,
 			Name: "Snooze " + option.Label,
 			Integration: &model.PostActionIntegration{
-				URL: actionPath + "/snooze",
+				URL: actionURL("snooze"),
 				Context: map[string]any{
 					contextReminderID:    r.ID,
 					contextSnoozeMinutes: option.Minutes,
@@ -69,7 +77,7 @@ func (p *Plugin) reminderActions(r *reminder.Reminder) []*model.PostAction {
 		Name:  "Stop this reminder",
 		Style: "danger",
 		Integration: &model.PostActionIntegration{
-			URL: actionPath + "/pause",
+			URL: actionURL("pause"),
 			Context: map[string]any{
 				contextReminderID: r.ID,
 			},

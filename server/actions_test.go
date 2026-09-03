@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,7 +172,11 @@ func TestReminderActionsPointAtRegisteredRoutes(t *testing.T) {
 		body, err := json.Marshal(model.PostActionIntegrationRequest{Context: action.Integration.Context})
 		require.NoError(t, err)
 
-		req := httptest.NewRequest(http.MethodPost, action.Integration.URL, bytes.NewReader(body))
+		// The plugin's own router sees the path with the /plugins/<id> prefix
+		// already stripped, which is how Mattermost dispatches to it.
+		path := strings.TrimPrefix(action.Integration.URL, "/plugins/"+manifest.Id)
+
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 		req.Header.Set("Mattermost-User-ID", "user1")
 		w := httptest.NewRecorder()
 
@@ -181,21 +187,37 @@ func TestReminderActionsPointAtRegisteredRoutes(t *testing.T) {
 	}
 }
 
-// Mattermost calls back on /api/v4/posts/<post id>/actions/<action id>, so an
-// action ID containing anything that changes under URL encoding makes the
-// button 404. Building one from a human-readable label put a space in it.
-func TestActionIDsAreURLSafe(t *testing.T) {
+// Mattermost calls back on /api/v4/posts/<post id>/actions/<action id>, and
+// that route matches alphanumerics only. A space 404s — and so does an
+// underscore, which URL escaping alone does not catch.
+func TestActionIDsAreAlphanumeric(t *testing.T) {
 	tp := newTestPlugin(t)
 
+	alphanumeric := regexp.MustCompile(`^[A-Za-z0-9]+$`)
 	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
 
 	for _, action := range tp.reminderActions(r) {
 		t.Run(action.Id, func(t *testing.T) {
 			require.NotEmpty(t, action.Id)
-			assert.Equal(t, action.Id, url.PathEscape(action.Id),
-				"action ID %q is altered by URL encoding, so the callback path will not match", action.Id)
-			assert.NotContains(t, action.Id, " ")
+			assert.Regexp(t, alphanumeric, action.Id,
+				"the callback route matches alphanumerics only, so %q will 404", action.Id)
+			assert.Equal(t, action.Id, url.PathEscape(action.Id))
 		})
+	}
+}
+
+// The server hands the integration URL to an HTTP client as-is, so it needs the
+// whole plugin path from the site root. A bare "/api/v1/..." fails with
+// "unsupported protocol scheme".
+func TestActionURLsCarryThePluginPath(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
+
+	for _, action := range tp.reminderActions(r) {
+		require.NotNil(t, action.Integration)
+		assert.True(t, strings.HasPrefix(action.Integration.URL, "/plugins/"+manifest.Id+"/"),
+			"button %q posts to %q, which does not name the plugin", action.Name, action.Integration.URL)
 	}
 }
 
