@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Recurring Reminders">
+  <circle cx="256" cy="256" r="240" fill="#1e325c"/>
+  <circle cx="256" cy="256" r="168" fill="none" stroke="#ffffff" stroke-width="28"/>
+  <path d="M256 148v116l78 46" fill="none" stroke="#ffffff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M392 132v84h-84" fill="none" stroke="#4a9eff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M120 380v-84h84" fill="none" stroke="#4a9eff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gofmt:*)",
+      "Bash(go fmt:*)",
+      "Bash(go doc:*)",
+      "Bash(go list:*)",
+      "Bash(make apply)",
+      "Bash(make help)"
+    ]
+  }
+}
