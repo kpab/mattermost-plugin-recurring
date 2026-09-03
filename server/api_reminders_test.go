@@ -105,3 +105,40 @@ func TestGetRemindersShowsPausedState(t *testing.T) {
 	assert.Equal(t, "paused", got.Reminders[0].NextRun,
 		"a paused reminder must not advertise a next run")
 }
+
+// The next run arrives with its label already attached, so the sidebar has no
+// strings of its own to translate. Its "Next:" label stayed English for exactly
+// that reason.
+func TestGetRemindersLabelsTheNextRun(t *testing.T) {
+	tp := newTestPlugin(t)
+	tp.api.locale = "ja"
+
+	require.NoError(t, tp.store.SaveReminder(
+		testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().Add(time.Hour).UnixMilli())))
+
+	w := getReminders(t, tp, "user1")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var got remindersResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.Len(t, got.Reminders, 1)
+
+	assert.Contains(t, got.Reminders[0].NextRun, "次回")
+	assert.NotContains(t, got.Reminders[0].NextRun, "Next")
+}
+
+// "next paused" is nonsense; a paused reminder just says it is paused.
+func TestGetRemindersDoesNotLabelAPausedReminder(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	paused := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().Add(time.Hour).UnixMilli())
+	paused.Paused = true
+	require.NoError(t, tp.store.SaveReminder(paused))
+
+	w := getReminders(t, tp, "user1")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var got remindersResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, "paused", got.Reminders[0].NextRun)
+}

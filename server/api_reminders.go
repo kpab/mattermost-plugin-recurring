@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/kpab/mattermost-plugin-recurring/server/reminder"
@@ -9,15 +10,17 @@ import (
 
 // reminderView is a reminder as the sidebar needs it.
 //
-// The schedule and the next run arrive already rendered, so that the wording
-// and the date formatting live in one place rather than being reimplemented in
-// TypeScript and drifting from what the slash command says.
+// Every string arrives already rendered, label included, so that the wording,
+// the date formatting and the translations live in one place rather than being
+// reimplemented in TypeScript and drifting from what the slash command says.
+// The sidebar's "Next:" label stayed English for exactly that reason.
 type reminderView struct {
 	ID       string `json:"id"`
 	Message  string `json:"message"`
 	Schedule string `json:"schedule"`
-	NextRun  string `json:"next_run"`
-	Paused   bool   `json:"paused"`
+	// NextRun is the whole line, label included: "次回 今日 18:00 JST".
+	NextRun string `json:"next_run"`
+	Paused  bool   `json:"paused"`
 }
 
 // remindersResponse is the payload of GET /api/v1/reminders.
@@ -51,11 +54,17 @@ func (p *Plugin) handleGetReminders(w http.ResponseWriter, req *http.Request) {
 
 // viewOf renders a reminder for the sidebar.
 func (p *Plugin) viewOf(r *reminder.Reminder, lang reminder.Lang) reminderView {
+	// A paused reminder has no next run to label — "next paused" is nonsense.
+	next := p.formatRunAt(r, lang)
+	if !r.Paused && r.NextRunAt != 0 {
+		next = fmt.Sprintf(msg(lang, "next"), next)
+	}
+
 	return reminderView{
 		ID:       r.ID,
 		Message:  r.Message,
 		Schedule: r.Schedule.Describe(lang),
-		NextRun:  p.formatRunAt(r, lang),
+		NextRun:  next,
 		Paused:   r.Paused,
 	}
 }

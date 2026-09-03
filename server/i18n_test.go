@@ -250,3 +250,28 @@ func TestUntranslatedParseErrorsStillRead(t *testing.T) {
 	assert.Contains(t, got, "25:00")
 	assert.Contains(t, got, "/recurring help")
 }
+
+// Japanese renders the clock without zero padding, so a single line does not
+// read "毎月1日 9:00 に · 次回 10月1日 09:00 JST".
+func TestJapaneseClockMatchesTheScheduleFormat(t *testing.T) {
+	tp := newTestPlugin(t)
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	require.NoError(t, err)
+
+	// 09:00 tomorrow, which is where the padding difference showed up.
+	now := time.Now().In(tokyo)
+	next := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, tokyo).AddDate(0, 0, 1)
+
+	r := &reminder.Reminder{
+		Timezone:  "Asia/Tokyo",
+		NextRunAt: next.UnixMilli(),
+		Schedule:  reminder.Schedule{Kind: reminder.KindDaily, At: reminder.TimeOfDay{Hour: 9}},
+	}
+
+	rendered := tp.formatRunAt(r, reminder.LangJA)
+	assert.Contains(t, rendered, "9:00")
+	assert.NotContains(t, rendered, "09:00")
+
+	// And the schedule writes the same clock the same way.
+	assert.Contains(t, r.Schedule.Describe(reminder.LangJA), "9:00")
+}

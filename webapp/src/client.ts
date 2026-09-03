@@ -4,7 +4,10 @@ export type Reminder = {
     id: string;
     message: string;
 
-    /** Rendered server-side, so the sidebar always says what the slash command says. */
+    /**
+     * Rendered server-side, label and all, so the sidebar says what the slash
+     * command says — in the reader's language, with no strings to translate here.
+     */
     schedule: string;
     next_run: string;
     paused: boolean;

@@ -121,7 +121,7 @@ export default function Sidebar() {
                     {reminder.paused ? (
                         <div style={styles.pausedBadge}>{'Paused'}</div>
                     ) : (
-                        <div style={styles.meta}>{`Next: ${reminder.next_run}`}</div>
+                        <div style={styles.meta}>{reminder.next_run}</div>
                     )}
                 </div>
             ))}

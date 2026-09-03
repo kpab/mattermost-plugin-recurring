@@ -422,7 +422,9 @@ func (p *Plugin) formatRunAt(r *reminder.Reminder, lang reminder.Lang) string {
 	daysAway := daysBetween(today, next)
 
 	if lang == reminder.LangJA {
-		clock := next.Format("15:04 MST")
+		// Not zero-padded, to match how Describe writes the same clock time:
+		// otherwise one line reads "毎月1日 9:00 に · 次回 10月1日 09:00 JST".
+		clock := fmt.Sprintf("%d:%02d %s", next.Hour(), next.Minute(), next.Format("MST"))
 		switch {
 		case daysAway == 0:
 			return "今日 " + clock
