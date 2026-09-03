@@ -26,6 +26,8 @@ const (
 	contextReminderID = "reminder_id"
 	// contextSnoozeMinutes is how long a snooze button defers a reminder for.
 	contextSnoozeMinutes = "snooze_minutes"
+	// contextEphemeral marks a button that lives on an ephemeral post.
+	contextEphemeral = "ephemeral"
 )
 
 // snoozeOptions are the offered delays: fifteen minutes for "not right this
@@ -61,8 +63,11 @@ func (p *Plugin) listActions(r *reminder.Reminder) []*model.PostAction {
 		Type: model.PostActionTypeButton,
 		Name: "Pause",
 		Integration: &model.PostActionIntegration{
-			URL:     actionURL("pause"),
-			Context: map[string]any{contextReminderID: r.ID},
+			URL: actionURL("pause"),
+			Context: map[string]any{
+				contextReminderID: r.ID,
+				contextEphemeral:  true,
+			},
 		},
 	}
 
@@ -80,8 +85,11 @@ func (p *Plugin) listActions(r *reminder.Reminder) []*model.PostAction {
 			Name:  "Delete",
 			Style: "danger",
 			Integration: &model.PostActionIntegration{
-				URL:     actionURL("delete"),
-				Context: map[string]any{contextReminderID: r.ID},
+				URL: actionURL("delete"),
+				Context: map[string]any{
+					contextReminderID: r.ID,
+					contextEphemeral:  true,
+				},
 			},
 		},
 	}
@@ -272,24 +280,49 @@ func actionFailureText(err error) string {
 	return "Something went wrong. Please try again."
 }
 
-// respondToAction rewrites the delivered message in place, so the buttons are
-// replaced by the outcome of pressing them rather than staying live.
+// respondToAction rewrites the post the button sits on, so that pressing it
+// leaves the outcome behind rather than a live button.
+//
+// Which mechanism does that depends on the post. An ephemeral post — the reply
+// to /recurring list — exists only in the reader's client, so asking the server
+// to update it by ID fails with "Post not found"; those have to go back through
+// UpdateEphemeralPost. A delivered reminder is a real post and takes the
+// ordinary Update.
 func (p *Plugin) respondToAction(w http.ResponseWriter, request *model.PostActionIntegrationRequest, message string) {
-	response := &model.PostActionIntegrationResponse{
-		Update: &model.Post{
+	response := &model.PostActionIntegrationResponse{}
+
+	if isEphemeral(request) {
+		post := &model.Post{
+			Id:        request.PostId,
+			ChannelId: request.ChannelId,
+			UserId:    request.UserId,
+			Message:   message,
+		}
+		// Dropping the attachments removes the buttons.
+		post.AddProp("attachments", nil)
+
+		p.client.Post.UpdateEphemeralPost(request.UserId, post)
+	} else {
+		response.Update = &model.Post{
 			Id:      request.PostId,
 			Message: message,
 			Props: map[string]any{
-				// Dropping the attachments removes the buttons.
 				"attachments": nil,
 			},
-		},
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		p.client.Log.Error("Failed to write an action response", "err", err)
 	}
+}
+
+// isEphemeral reports whether the button sits on an ephemeral post.
+func isEphemeral(request *model.PostActionIntegrationRequest) bool {
+	ephemeral, ok := request.Context[contextEphemeral].(bool)
+
+	return ok && ephemeral
 }
 
 // contextInt reads a number out of an action context. Values arrive as JSON, so

@@ -109,6 +109,9 @@ func (s *fakeStore) ListUserIDs() ([]string, error) {
 // under test reaches for an API these tests have not thought about.
 type silentAPI struct {
 	plugintest.API
+
+	// updatedEphemeral records the posts the code asked to rewrite in place.
+	updatedEphemeral []*model.Post
 }
 
 func (a *silentAPI) LogError(string, ...any) {}
@@ -116,11 +119,17 @@ func (a *silentAPI) LogWarn(string, ...any)  {}
 func (a *silentAPI) LogInfo(string, ...any)  {}
 func (a *silentAPI) LogDebug(string, ...any) {}
 
+func (a *silentAPI) UpdateEphemeralPost(_ string, post *model.Post) *model.Post {
+	a.updatedEphemeral = append(a.updatedEphemeral, post)
+	return post
+}
+
 // testPlugin wires a Plugin to fakes, capturing what it would have sent.
 type testPlugin struct {
 	*Plugin
 
 	store *fakeStore
+	api   *silentAPI
 	sent  []string
 	fail  error
 }
@@ -129,12 +138,14 @@ func newTestPlugin(t *testing.T) *testPlugin {
 	t.Helper()
 
 	store := newFakeStore()
+	api := &silentAPI{}
 	tp := &testPlugin{
 		Plugin: &Plugin{
 			kvstore: store,
-			client:  pluginapi.NewClient(&silentAPI{}, nil),
+			client:  pluginapi.NewClient(api, nil),
 		},
 		store: store,
+		api:   api,
 	}
 
 	// sendReminder is replaced wholesale so the tests do not need a live

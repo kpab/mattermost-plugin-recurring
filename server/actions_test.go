@@ -328,3 +328,44 @@ func TestResumeAndDeleteCannotReachAnotherUsersReminder(t *testing.T) {
 		})
 	}
 }
+
+// The reply to /recurring list is an ephemeral post, which exists only in the
+// reader's client. Asking the server to update it by ID fails with "Post not
+// found", so those buttons have to answer through UpdateEphemeralPost instead —
+// otherwise the action runs but the card never changes.
+func TestEphemeralActionsUpdateThroughTheEphemeralAPI(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
+	require.NoError(t, tp.store.SaveReminder(r))
+
+	// The list's own buttons carry the ephemeral marker.
+	action := tp.listActions(r)[0]
+	w := postAction(t, tp, "/pause", "user1", action.Integration.Context)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	require.Len(t, tp.api.updatedEphemeral, 1, "an ephemeral card must be rewritten through UpdateEphemeralPost")
+	assert.Contains(t, tp.api.updatedEphemeral[0].Message, "paused")
+
+	// And the response must not also ask the server to update a real post.
+	var response model.PostActionIntegrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.Nil(t, response.Update, "an ephemeral post cannot be updated by ID")
+}
+
+// A delivered reminder is a real post, and takes the ordinary update.
+func TestDeliveredMessageActionsUpdateThePostByID(t *testing.T) {
+	tp := newTestPlugin(t)
+
+	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, time.Now().UnixMilli())
+	require.NoError(t, tp.store.SaveReminder(r))
+
+	action := tp.reminderActions(r)[0]
+	w := postAction(t, tp, "/snooze", "user1", action.Integration.Context)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var response model.PostActionIntegrationResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.NotNil(t, response.Update, "a real post is updated by ID")
+	assert.Empty(t, tp.api.updatedEphemeral)
+}
