@@ -1,6 +1,7 @@
 package kvstore
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -181,6 +182,49 @@ func TestSavedReminderIsDetachedFromCaller(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "weekly report", got.Message)
 	assert.Equal(t, []time.Weekday{time.Monday}, got.Schedule.Weekdays)
+}
+
+func TestListUserIDs(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	first := newReminder("a", 100)
+	second := newReminder("b", 100)
+	second.UserID = "user9999999999999999999999"
+
+	require.NoError(t, store.SaveReminder(first))
+	require.NoError(t, store.SaveReminder(second))
+
+	got, err := store.ListUserIDs()
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{first.UserID, second.UserID}, got)
+}
+
+func TestListUserIDsEmpty(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	got, err := store.ListUserIDs()
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// The KV store holds far more than our reminder lists — the scheduler keeps a
+// record per pending job — and those keys are interleaved with ours when paging
+// through. Filtering must not be mistaken for reaching the end of the list.
+func TestListUserIDsPagesPastForeignKeys(t *testing.T) {
+	store, api := newTestStore(t)
+
+	// Enough scheduler-style keys to fill several pages on their own. They sort
+	// before "reminders-", so a naive implementation stops before ever seeing
+	// a reminder.
+	for i := range listKeysPerPage * 3 {
+		api.set(fmt.Sprintf("once_job%04d", i), []byte("{}"))
+	}
+
+	require.NoError(t, store.SaveReminder(newReminder("a", 100)))
+
+	got, err := store.ListUserIDs()
+	require.NoError(t, err)
+	assert.Equal(t, []string{testUserID}, got)
 }
 
 func TestRemindersAreScopedPerUser(t *testing.T) {

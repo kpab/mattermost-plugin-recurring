@@ -18,4 +18,7 @@ type KVStore interface {
 	DeleteReminder(userID, reminderID string) error
 	// DeleteAllReminders removes every reminder owned by the user.
 	DeleteAllReminders(userID string) error
+	// ListUserIDs returns the ID of every user who owns at least one reminder.
+	// Used on activation to re-queue reminders the scheduler has lost track of.
+	ListUserIDs() ([]string, error)
 }

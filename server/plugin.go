@@ -3,7 +3,6 @@ package main
 import (
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -32,7 +31,11 @@ type Plugin struct {
 	// router is the HTTP router for handling API requests.
 	router *mux.Router
 
-	backgroundJob *cluster.Job
+	// scheduler queues each reminder's next firing.
+	scheduler *cluster.JobOnceScheduler
+
+	// botUserID is the account reminders are delivered from.
+	botUserID string
 
 	// configurationLock synchronizes access to the configuration.
 	configurationLock sync.RWMutex
@@ -52,28 +55,20 @@ func (p *Plugin) OnActivate() error {
 
 	p.router = p.initRouter()
 
-	job, err := cluster.Schedule(
-		p.API,
-		"BackgroundJob",
-		cluster.MakeWaitForRoundedInterval(1*time.Hour),
-		p.runJob,
-	)
+	botUserID, err := p.client.Bot.EnsureBot(&model.Bot{
+		Username:    "recurring",
+		DisplayName: "Recurring Reminders",
+		Description: "Delivers your recurring reminders.",
+	})
 	if err != nil {
-		return errors.Wrap(err, "failed to schedule background job")
+		return errors.Wrap(err, "failed to ensure the reminder bot")
+	}
+	p.botUserID = botUserID
+
+	if err := p.startScheduler(); err != nil {
+		return err
 	}
 
-	p.backgroundJob = job
-
-	return nil
-}
-
-// OnDeactivate is invoked when the plugin is deactivated.
-func (p *Plugin) OnDeactivate() error {
-	if p.backgroundJob != nil {
-		if err := p.backgroundJob.Close(); err != nil {
-			p.API.LogError("Failed to close background job", "err", err)
-		}
-	}
 	return nil
 }
 

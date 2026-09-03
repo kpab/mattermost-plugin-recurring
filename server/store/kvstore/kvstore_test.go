@@ -2,6 +2,7 @@ package kvstore
 
 import (
 	"bytes"
+	"sort"
 	"sync"
 	"testing"
 
@@ -57,6 +58,35 @@ func (a *fakeAPI) KVDelete(key string) *model.AppError {
 	delete(a.store, key)
 
 	return nil
+}
+
+// KVList returns keys in sorted order so tests can reason about paging.
+func (a *fakeAPI) KVList(page, perPage int) ([]string, *model.AppError) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	keys := make([]string, 0, len(a.store))
+	for k := range a.store {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	start := page * perPage
+	if start >= len(keys) {
+		return nil, nil
+	}
+
+	end := min(start+perPage, len(keys))
+
+	return keys[start:end], nil
+}
+
+// set writes a raw value, for seeding keys the store itself would not create.
+func (a *fakeAPI) set(key string, value []byte) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.store[key] = value
 }
 
 func (a *fakeAPI) has(key string) bool {

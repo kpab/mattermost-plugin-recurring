@@ -3,6 +3,7 @@ package kvstore
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"github.com/pkg/errors"
 
@@ -93,6 +94,37 @@ func (kv Client) DeleteAllReminders(userID string) error {
 		return errors.Wrap(err, "failed to delete reminders")
 	}
 	return nil
+}
+
+// listKeysPerPage is how many KV keys ListUserIDs pulls per round trip.
+const listKeysPerPage = 100
+
+// ListUserIDs returns the ID of every user who owns at least one reminder.
+func (kv Client) ListUserIDs() ([]string, error) {
+	var userIDs []string
+
+	for page := 0; ; page++ {
+		// Deliberately not using pluginapi's WithPrefix option: it filters
+		// after the page has been fetched, so a page holding only other keys
+		// (the scheduler's own "once_" records, for instance) would come back
+		// empty and be mistaken for the end of the list.
+		keys, err := kv.client.KV.ListKeys(page, listKeysPerPage)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to list reminder keys")
+		}
+
+		for _, key := range keys {
+			if strings.HasPrefix(key, remindersKeyPrefix) {
+				userIDs = append(userIDs, strings.TrimPrefix(key, remindersKeyPrefix))
+			}
+		}
+
+		if len(keys) < listKeysPerPage {
+			break
+		}
+	}
+
+	return userIDs, nil
 }
 
 // updateReminders applies mutate to the user's stored list under an atomic
