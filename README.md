@@ -49,15 +49,16 @@ timezone. There is nothing to configure — the plugin has no settings.
 
 ## Installation
 
-Not yet published to the Mattermost Marketplace. For now, build from source:
+Not yet in the Mattermost Marketplace. For now, take the `.tar.gz` from the
+[latest release](https://github.com/kpab/mattermost-plugin-recurring/releases)
+and upload it via **System Console → Plugins → Plugin Management**.
+Plugin uploads must be enabled on the server (`PluginSettings.EnableUploads`).
+
+To build it yourself instead:
 
 ```sh
 make dist
 ```
-
-Then upload `dist/com.github.kpab.recurring-<version>.tar.gz` via
-**System Console → Plugins → Plugin Management**.
-Plugin uploads must be enabled on the server (`PluginSettings.EnableUploads`).
 
 ## Development
 

@@ -1,0 +1,78 @@
+name: release
+
+# The shared plugin-ci workflow builds a bundle but only delivers it to
+# Mattermost's own S3 bucket, which a third-party plugin cannot write to. So a
+# tag would otherwise produce no downloadable artifact at all — and the
+# Marketplace submission requires a link someone can install from.
+on:
+  push:
+    tags:
+      - "v*"
+  # Lets a release be re-cut without moving the tag, if the upload itself failed.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The existing tag to build a release for
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # The version is derived from git describe, so the full history and
+          # tags have to be present or every build claims to be 0.0.0.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Build the plugin bundle
+        run: make dist
+
+      - name: Check the bundle carries every architecture
+        # A bundle missing an architecture installs fine and then fails to start
+        # on those servers, which is how the To Do plugin ended up with a
+        # four-year-old issue about ARM. Fail the release instead.
+        run: |
+          set -euo pipefail
+          bundle=$(ls dist/*.tar.gz)
+          echo "checking $bundle"
+          for arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64.exe; do
+            if ! tar -tzf "$bundle" | grep -q "server/dist/plugin-$arch$"; then
+              echo "::error::bundle is missing server/dist/plugin-$arch"
+              exit 1
+            fi
+            echo "  ok: $arch"
+          done
+          tar -tzf "$bundle" | grep -q "webapp/dist/main.js$" || {
+            echo "::error::bundle is missing the webapp bundle"
+            exit 1
+          }
+          echo "  ok: webapp"
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          files: dist/*.tar.gz
+          generate_release_notes: true
+          fail_on_unmatched_files: true

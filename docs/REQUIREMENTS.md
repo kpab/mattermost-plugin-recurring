@@ -142,9 +142,12 @@ Marketplace 上の実質的な空席を、繰り返しに特化した小さく�
   ユーザーのタイムゾーンを正しく扱う。
 
 - **M3(公開する)**: Marketplace 申請。以下が未達:
-  - [ ] リリース用ワークフロー。現行 CI(`mattermost/actions-workflows` の再利用)は
-        lint/test/build と Mattermost 社の S3 への delivery のみで、
-        GitHub Release も tar.gz の添付もしない。`tags: v*` を拾うのに成果物が出ない
+  - [x] リリース用ワークフロー(2026-09-03) — `.github/workflows/release.yml` を追加。
+        共有ワークフローの delivery は Mattermost 社の S3 宛でサードパーティは書けないため、
+        タグを打っても配布物が出ない状態だった。
+        tar.gz を GitHub Release に添付し、**5アーキテクチャすべてと webapp が
+        同梱されていることを検証してから公開する**(欠けたバンドルは
+        インストールはできて起動だけ失敗するため、リリースを止めるほうが良い)
   - [ ] スクリーンショット(RHS ができてから)
   - [ ] i18n(en/ja)。現状 `webapp/i18n/en.json` は空
   - [ ] `min_server_version: 9.5.0` の実機確認。使用 API はソース上 9.5.0 に存在するが実測していない
