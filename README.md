@@ -15,7 +15,7 @@ Mattermost's built-in message reminder fires once. This one keeps going.
 - **No configuration and no external service** — reminders live in your own
   server's KV store and are delivered by a bot that runs there
 
-> **Status: early development.** Not yet released, and not yet in the Marketplace.
+> **Status: early.** Released and in use, but not yet in the Mattermost Marketplace.
 
 ## Usage
 
@@ -50,10 +50,13 @@ timezone. There is nothing to configure — the plugin has no settings.
 
 ## Installation
 
-Not yet in the Mattermost Marketplace. For now, take the `.tar.gz` from the
+Take the `.tar.gz` from the
 [latest release](https://github.com/kpab/mattermost-plugin-recurring/releases)
-and upload it via **System Console → Plugins → Plugin Management**.
+and upload it in **System Console → Plugins → Plugin Management**.
 Plugin uploads must be enabled on the server (`PluginSettings.EnableUploads`).
+
+Requires Mattermost 9.5 or later. There is nothing to configure once it is
+enabled.
 
 To build it yourself instead:
 
