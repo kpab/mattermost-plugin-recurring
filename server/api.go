@@ -14,12 +14,14 @@ func (p *Plugin) initRouter() *mux.Router {
 	// Middleware to require that the user is logged in
 	router.Use(p.MattermostAuthorizationRequired)
 
-	// The API surface is added in M2, when the right-hand sidebar needs it.
-	// The prefix and the auth middleware are set up now so that every route
-	// added later is behind the login check by construction. Note that mux only
-	// runs middleware for requests that match a route, so with no routes
-	// registered the middleware never runs and everything is a 404.
-	router.PathPrefix("/api/v1").Subrouter()
+	api := router.PathPrefix("/api/v1").Subrouter()
+
+	// Buttons on a delivered reminder post back here. Mattermost forwards the
+	// pressing user in Mattermost-User-ID, which the middleware above requires,
+	// and each handler scopes its lookup to that user's own reminders.
+	actions := api.PathPrefix("/actions").Subrouter()
+	actions.HandleFunc("/snooze", p.handleSnooze).Methods(http.MethodPost)
+	actions.HandleFunc("/pause", p.handlePause).Methods(http.MethodPost)
 
 	return router
 }

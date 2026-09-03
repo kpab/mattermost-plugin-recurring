@@ -9,6 +9,7 @@ Mattermost's built-in message reminder fires once. This one keeps going.
 - **Daily, weekdays, weekly, or monthly**, written in plain English or Japanese
 - **Delivered by direct message** in your own timezone, and correct across
   daylight-saving changes
+- **Snooze or stop** a reminder from the message itself, without retyping anything
 - **Pause and resume** a reminder without losing it
 - **No configuration and no external service** — reminders live in your own
   server's KV store and are delivered by a bot that runs there
@@ -107,7 +108,6 @@ Bug reports and feature requests are welcome in
 Not built yet:
 
 - Reminders posted to a channel, rather than only to yourself
-- Snoozing a reminder from the message itself
 - A right-hand sidebar to browse, create and edit reminders
 - One-off reminders ("in 30 minutes") — for now, use Mattermost's built-in
   **Remind me about this** on a message

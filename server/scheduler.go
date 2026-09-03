@@ -148,6 +148,12 @@ func (p *Plugin) sendReminder(r *reminder.Reminder) error {
 	// mention keywords rather than letting a reminder render as one.
 	post.AddProp("mentionHighlightDisabled", true)
 
+	// Snooze and stop live on the message itself: this is the one moment the
+	// reader has the reminder in front of them.
+	model.ParseSlackAttachment(post, []*model.SlackAttachment{{
+		Actions: p.reminderActions(r),
+	}})
+
 	if err := p.client.Post.DM(p.botUserID, r.UserID, post); err != nil {
 		return errors.Wrap(err, "failed to send the reminder direct message")
 	}
