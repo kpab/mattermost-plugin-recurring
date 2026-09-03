@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -133,9 +134,18 @@ func (p *Plugin) deliverReminder(r *reminder.Reminder, now time.Time) {
 
 // sendReminder delivers the reminder to its owner as a direct message from the
 // plugin's bot. Plugin.send points here in production and is replaced in tests.
+//
+// The schedule is repeated under the message: arriving as a bare line of text
+// from a bot, a reminder gives the reader no way to tell which of their
+// reminders fired or when it will come round again.
 func (p *Plugin) sendReminder(r *reminder.Reminder) error {
+	detail := r.Schedule.Describe()
+	if next, ok := r.NextRun(time.Now()); ok {
+		detail += " · next " + next.Format("Mon, 2 Jan 15:04 MST")
+	}
+
 	post := &model.Post{
-		Message: r.Message,
+		Message: fmt.Sprintf("⏰ **%s**\n_%s_", r.Message, detail),
 	}
 
 	// The message is the user's own text echoed back to them in their own DM,

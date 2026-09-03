@@ -2,54 +2,49 @@
 
 [![Build Status](https://github.com/kpab/mattermost-plugin-recurring/actions/workflows/ci.yml/badge.svg)](https://github.com/kpab/mattermost-plugin-recurring/actions/workflows/ci.yml)
 
-Schedule **recurring** reminders in Mattermost — "every weekday at 9:00", "every Monday at 10:00",
-"on the 1st of every month".
+> Reminders that repeat — every weekday at 9:00, every Monday, the 1st of the month.
 
-Mattermost ships with one-off message reminders, but
-[recurring reminders are explicitly unsupported](https://docs.mattermost.com/end-user-guide/collaborate/message-reminders.html).
-The community plugin that used to fill that gap
-([mattermost-plugin-remind](https://github.com/scottleedavis/mattermost-plugin-remind)) is archived, and the
-request to add recurrence to the To Do plugin
-([#61](https://github.com/mattermost-community/mattermost-plugin-todo/issues/61)) has been open since 2020.
-This plugin fills that gap.
+Mattermost's built-in message reminder fires once. This one keeps going.
 
-> **Status: early development.** Not yet released. See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for the roadmap.
+- **Daily, weekdays, weekly, or monthly**, written in plain English or Japanese
+- **Delivered by direct message** in your own timezone, and correct across
+  daylight-saving changes
+- **Pause and resume** a reminder without losing it
+- **No configuration and no external service** — reminders live in your own
+  server's KV store and are delivered by a bot that runs there
 
-## Features
-
-- **Recurring reminders** — daily, weekdays, weekly on a given day, monthly
-- **Natural language input** in English and Japanese:
-  `/recurring every monday at 10:00 weekly report`, `/recurring 毎朝9時 ストレッチ`
-- **List and delete** your reminders from the slash command
-- **Timezone-aware** — reminders fire in *your* timezone, not the server's, and
-  keep their wall-clock time across daylight-saving changes
-
-### Not built yet
-
-- One-off reminders ("in 30 minutes")
-- A right-hand sidebar to browse and edit reminders
-- Completing and snoozing a reminder
-- Reminders posted to a channel, or assigned to someone else
-- Several weekdays in one reminder ("every Monday and Thursday")
-- Japanese UI strings (the slash command replies in English)
+> **Status: early development.** Not yet released, and not yet in the Marketplace.
 
 ## Usage
 
 ```
-/recurring every monday at 10:00 weekly report
+/recurring daily 9:00 stand-up
 /recurring weekdays 18:00 log off
-/recurring daily 9am stand-up
+/recurring every monday at 10:00 weekly report
 /recurring monthly on the 1st 9:00 expenses
-/recurring 毎週月曜 10:00 週次報告
-/recurring 毎朝9時 ストレッチ
+```
 
-/recurring list            # show your reminders
-/recurring delete <id>     # remove one
+Times can be `10:00`, `9am`, `6:30pm`, or `at 9`.
+
+Japanese input works too — the replies come back in English for now:
+
+```
+/recurring 毎朝9時 ストレッチ
+/recurring 毎週月曜 10:00 週次報告
+```
+
+Managing them:
+
+```
+/recurring list                  # show your reminders
+/recurring pause <id>            # stop one without deleting it
+/recurring resume <id>           # start it again
+/recurring delete <id>           # remove one
 /recurring help
 ```
 
-Reminders arrive as a direct message from the plugin's bot. There is nothing to
-configure: the plugin has no settings.
+Reminders arrive as a direct message from the plugin's bot, in your own
+timezone. There is nothing to configure — the plugin has no settings.
 
 ## Installation
 
@@ -106,6 +101,40 @@ Use `make patch` / `make minor` / `make major` (and the `-rc` variants) to cut a
 
 Bug reports and feature requests are welcome in
 [issues](https://github.com/kpab/mattermost-plugin-recurring/issues).
+
+## Roadmap
+
+Not built yet:
+
+- Reminders posted to a channel, rather than only to yourself
+- Snoozing a reminder from the message itself
+- A right-hand sidebar to browse, create and edit reminders
+- One-off reminders ("in 30 minutes") — for now, use Mattermost's built-in
+  **Remind me about this** on a message
+- Several weekdays in one reminder ("every Monday and Thursday")
+- Japanese replies (Japanese input already works; the replies come back in English)
+
+## Why not Slack, Google Calendar, or Todoist?
+
+Because a lot of Mattermost runs where those cannot: air-gapped networks,
+regulated industries, organisations that self-host by policy. This plugin adds
+no external service and no extra account — reminders are stored in your own
+server's KV store and delivered by a bot that lives there. And the reminder
+arrives where the work already is.
+
+If you want task lists, use the
+[To Do plugin](https://github.com/mattermost-community/mattermost-plugin-todo).
+This one is for things that repeat on a clock.
+
+## Why this exists
+
+Mattermost has had one-off message reminders since v7.10, but
+[recurring reminders are explicitly unsupported](https://docs.mattermost.com/end-user-guide/collaborate/message-reminders.html).
+The community plugin that used to fill that gap
+([mattermost-plugin-remind](https://github.com/scottleedavis/mattermost-plugin-remind))
+is archived, and the request to add recurrence to the To Do plugin
+([#61](https://github.com/mattermost-community/mattermost-plugin-todo/issues/61))
+has been open since 2020.
 
 ## License
 

@@ -16,13 +16,25 @@ import (
 // reach for. Keeping it here also keeps the dependency list short, which
 // matters for getting through a Marketplace security review.
 
-// ErrNoSchedule is returned when the input does not begin with something that
-// looks like a schedule.
-var ErrNoSchedule = errors.New("could not understand when to remind you")
+// Each parse error names what was missing and shows something that works.
+// A reminder that will not parse is the most common way to meet this plugin,
+// so the error is the documentation most people read.
+var (
+	// ErrNoSchedule is returned when the input does not begin with something
+	// that looks like a schedule.
+	ErrNoSchedule = errors.New(
+		"I couldn't tell how often to repeat this. Put the repeat first, then the time, then the message — like `every monday at 10:00 weekly report`")
 
-// ErrNoMessage is returned when a schedule was understood but nothing was left
-// to remind the user about.
-var ErrNoMessage = errors.New("tell me what to remind you about")
+	// ErrNoTime is returned when the repeat was understood but no time of day
+	// followed it.
+	ErrNoTime = errors.New(
+		"I understood the repeat, but not the time. Add one like `10:00`, `9am` or `18:30`")
+
+	// ErrNoMessage is returned when a schedule was understood but nothing was
+	// left to remind the user about.
+	ErrNoMessage = errors.New(
+		"that's when, but not what. Put the message after the time — like `every day at 09:00 stand-up`")
+)
 
 // fullWidth maps the characters a Japanese IME produces to their ASCII
 // equivalents, so "１０：００" parses the same as "10:00".
@@ -75,8 +87,9 @@ var (
 	reMonthlyEN = regexp.MustCompile(`(?i)^(?:every\s+month\s+on\s+(?:the\s+)?|monthly\s+on\s+(?:the\s+)?)(\d{1,2})(?:st|nd|rd|th)?\b\s*`)
 
 	// Times, tried in order. The 24-hour form is first so "18:30" is not read
-	// as a bare hour.
-	reTimeColon    = regexp.MustCompile(`^(\d{1,2}):(\d{2})\s*`)
+	// as a bare hour. It also swallows a trailing am/pm: without that, "9:00am"
+	// leaves "am" at the head of the message, and "9:00pm" silently means 09:00.
+	reTimeColon    = regexp.MustCompile(`(?i)^(\d{1,2}):(\d{2})\s*(am|pm)?\s*`)
 	reTimeJPHalf   = regexp.MustCompile(`^(\d{1,2})\s*時\s*半\s*`)
 	reTimeJPMinute = regexp.MustCompile(`^(\d{1,2})\s*時\s*(\d{1,2})\s*分?\s*`)
 	reTimeJPHour   = regexp.MustCompile(`^(\d{1,2})\s*時\s*`)
@@ -84,6 +97,10 @@ var (
 
 	// Optional filler between the schedule and the time, e.g. "every day at 9am".
 	reAt = regexp.MustCompile(`(?i)^(?:at\b|の)\s*`)
+
+	// A bare hour, only accepted after an explicit "at" — otherwise the leading
+	// number of a message would be eaten as a time.
+	reTimeBareHour = regexp.MustCompile(`^(\d{1,2})\b\s*`)
 )
 
 // ParseRecurring reads a recurring schedule and its message out of one line of
@@ -101,9 +118,11 @@ func ParseRecurring(input string) (Schedule, string, error) {
 		return Schedule{}, "", err
 	}
 
-	rest = reAt.ReplaceAllString(strings.TrimSpace(rest), "")
+	rest = strings.TrimSpace(rest)
+	afterAt := reAt.MatchString(rest)
+	rest = reAt.ReplaceAllString(rest, "")
 
-	at, rest, err := parseTimeOfDay(rest)
+	at, rest, err := parseTimeOfDay(rest, afterAt)
 	if err != nil {
 		return Schedule{}, "", err
 	}
@@ -114,7 +133,7 @@ func ParseRecurring(input string) (Schedule, string, error) {
 		return Schedule{}, "", ErrNoMessage
 	}
 	if utf8.RuneCountInString(message) > MaxMessageLength {
-		return Schedule{}, "", fmt.Errorf("that message is too long: keep it under %d characters", MaxMessageLength)
+		return Schedule{}, "", fmt.Errorf("that message is too long — keep it under %d characters", MaxMessageLength)
 	}
 
 	if err := schedule.Validate(); err != nil {
@@ -176,12 +195,23 @@ func parseRecurrence(input string) (Schedule, string, error) {
 	return Schedule{}, "", ErrNoSchedule
 }
 
-// parseTimeOfDay consumes the leading time of day.
-func parseTimeOfDay(input string) (TimeOfDay, string, error) {
+// parseTimeOfDay consumes the leading time of day. afterAt reports whether an
+// explicit "at" preceded it, which is what makes a bare hour ("at 9") safe to
+// accept without eating the first number of a message.
+func parseTimeOfDay(input string, afterAt bool) (TimeOfDay, string, error) {
 	if m := reTimeColon.FindStringSubmatch(input); m != nil {
 		hour, minute := atoi(m[1]), atoi(m[2])
-		if hour > 23 || minute > 59 {
-			return TimeOfDay{}, "", fmt.Errorf("%s is not a valid time", strings.TrimSpace(m[0]))
+		if meridiem := strings.ToLower(m[3]); meridiem != "" {
+			converted, err := applyMeridiem(hour, meridiem)
+			if err != nil {
+				return TimeOfDay{}, "", err
+			}
+			hour = converted
+		} else if hour > 23 {
+			return TimeOfDay{}, "", invalidTime(m[0])
+		}
+		if minute > 59 {
+			return TimeOfDay{}, "", invalidTime(m[0])
 		}
 		return TimeOfDay{Hour: hour, Minute: minute}, input[len(m[0]):], nil
 	}
@@ -189,7 +219,7 @@ func parseTimeOfDay(input string) (TimeOfDay, string, error) {
 	if m := reTimeJPHalf.FindStringSubmatch(input); m != nil {
 		hour := atoi(m[1])
 		if hour > 23 {
-			return TimeOfDay{}, "", fmt.Errorf("%s is not a valid time", strings.TrimSpace(m[0]))
+			return TimeOfDay{}, "", invalidTime(m[0])
 		}
 		return TimeOfDay{Hour: hour, Minute: 30}, input[len(m[0]):], nil
 	}
@@ -197,7 +227,7 @@ func parseTimeOfDay(input string) (TimeOfDay, string, error) {
 	if m := reTimeJPMinute.FindStringSubmatch(input); m != nil {
 		hour, minute := atoi(m[1]), atoi(m[2])
 		if hour > 23 || minute > 59 {
-			return TimeOfDay{}, "", fmt.Errorf("%s is not a valid time", strings.TrimSpace(m[0]))
+			return TimeOfDay{}, "", invalidTime(m[0])
 		}
 		return TimeOfDay{Hour: hour, Minute: minute}, input[len(m[0]):], nil
 	}
@@ -205,27 +235,51 @@ func parseTimeOfDay(input string) (TimeOfDay, string, error) {
 	if m := reTimeJPHour.FindStringSubmatch(input); m != nil {
 		hour := atoi(m[1])
 		if hour > 23 {
-			return TimeOfDay{}, "", fmt.Errorf("%s is not a valid time", strings.TrimSpace(m[0]))
+			return TimeOfDay{}, "", invalidTime(m[0])
 		}
 		return TimeOfDay{Hour: hour}, input[len(m[0]):], nil
 	}
 
 	if m := reTimeMeridiem.FindStringSubmatch(input); m != nil {
-		hour := atoi(m[1])
-		if hour < 1 || hour > 12 {
-			return TimeOfDay{}, "", fmt.Errorf("%s is not a valid time", strings.TrimSpace(m[0]))
-		}
-		meridiem := strings.ToLower(m[2])
-		if meridiem == "pm" && hour != 12 {
-			hour += 12
-		}
-		if meridiem == "am" && hour == 12 {
-			hour = 0
+		hour, err := applyMeridiem(atoi(m[1]), strings.ToLower(m[2]))
+		if err != nil {
+			return TimeOfDay{}, "", err
 		}
 		return TimeOfDay{Hour: hour}, input[len(m[0]):], nil
 	}
 
-	return TimeOfDay{}, "", errors.New("could not find a time of day, try something like 10:00")
+	if afterAt {
+		if m := reTimeBareHour.FindStringSubmatch(input); m != nil {
+			hour := atoi(m[1])
+			if hour > 23 {
+				return TimeOfDay{}, "", invalidTime(m[0])
+			}
+			return TimeOfDay{Hour: hour}, input[len(m[0]):], nil
+		}
+	}
+
+	return TimeOfDay{}, "", ErrNoTime
+}
+
+// invalidTime reports a time that parsed but is out of range.
+func invalidTime(matched string) error {
+	return fmt.Errorf("`%s` isn't a valid time — hours run 0 to 23, minutes 0 to 59", strings.TrimSpace(matched))
+}
+
+// applyMeridiem converts a 12-hour clock reading to 24-hour.
+func applyMeridiem(hour int, meridiem string) (int, error) {
+	if hour < 1 || hour > 12 {
+		return 0, fmt.Errorf("`%d%s` isn't a valid time — with am or pm the hour runs 1 to 12", hour, meridiem)
+	}
+
+	switch {
+	case meridiem == "pm" && hour != 12:
+		return hour + 12, nil
+	case meridiem == "am" && hour == 12:
+		return 0, nil
+	default:
+		return hour, nil
+	}
 }
 
 // atoi parses digits already matched by a regexp, so it cannot fail.

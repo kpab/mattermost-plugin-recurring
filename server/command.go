@@ -15,37 +15,45 @@ import (
 
 const commandTrigger = "recurring"
 
-const commandHelp = `**Recurring Reminders**
-
-Set a reminder that repeats:
-* ` + "`/recurring every monday at 10:00 weekly report`" + `
+const commandHelp = "**Recurring Reminders** — reminders that repeat. Say when, then what.\n" + `
+Most used:
+* ` + "`/recurring daily 9:00 stand-up`" + `
 * ` + "`/recurring weekdays 18:00 log off`" + `
-* ` + "`/recurring daily 9am stand-up`" + `
+* ` + "`/recurring every monday at 10:00 weekly report`" + `
 * ` + "`/recurring monthly on the 1st 9:00 expenses`" + `
-* ` + "`/recurring 毎週月曜 10:00 週次報告`" + `
-* ` + "`/recurring 毎朝9時 ストレッチ`" + `
+
+Times can be ` + "`10:00`" + `, ` + "`9am`" + `, ` + "`6:30pm`" + `, or ` + "`at 9`" + `.
 
 Manage them:
 * ` + "`/recurring list`" + ` — show your reminders
+* ` + "`/recurring pause <id>`" + ` / ` + "`/recurring resume <id>`" + ` — stop and start one
 * ` + "`/recurring delete <id>`" + ` — remove one
-* ` + "`/recurring help`" + ` — show this message
 
-Reminders are delivered as a direct message, in your own timezone.`
+Japanese input works too:
+* ` + "`/recurring 毎朝9時 ストレッチ`" + `
+* ` + "`/recurring 毎週月曜 10:00 週次報告`" + `
+_(replies are in English for now)_`
 
 // registerCommand tells the server about /recurring.
 func (p *Plugin) registerCommand() error {
 	autocomplete := model.NewAutocompleteData(commandTrigger, "[when] [message]", "Set a reminder that repeats")
-	autocomplete.AddTextArgument("When and what to remind you about, e.g. \"every monday at 10:00 weekly report\"", "[when] [message]", "")
+	autocomplete.AddTextArgument("e.g. every monday at 10:00 weekly report", "[when] [message]", "")
 
-	list := model.NewAutocompleteData("list", "", "Show your reminders")
-	autocomplete.AddCommand(list)
+	autocomplete.AddCommand(model.NewAutocompleteData("list", "", "Show your reminders"))
 
 	remove := model.NewAutocompleteData("delete", "[id]", "Delete a reminder")
 	remove.AddTextArgument("The ID shown by /recurring list", "[id]", "")
 	autocomplete.AddCommand(remove)
 
-	help := model.NewAutocompleteData("help", "", "Show help")
-	autocomplete.AddCommand(help)
+	pause := model.NewAutocompleteData("pause", "[id]", "Stop a reminder without deleting it")
+	pause.AddTextArgument("The ID shown by /recurring list", "[id]", "")
+	autocomplete.AddCommand(pause)
+
+	resume := model.NewAutocompleteData("resume", "[id]", "Start a paused reminder again")
+	resume.AddTextArgument("The ID shown by /recurring list", "[id]", "")
+	autocomplete.AddCommand(resume)
+
+	autocomplete.AddCommand(model.NewAutocompleteData("help", "", "Show help"))
 
 	if err := p.client.SlashCommand.Register(&model.Command{
 		Trigger:          commandTrigger,
@@ -69,6 +77,8 @@ const (
 	subcommandCreate subcommand = iota
 	subcommandList
 	subcommandDelete
+	subcommandPause
+	subcommandResume
 	subcommandHelp
 )
 
@@ -93,6 +103,10 @@ func parseCommand(raw string) (subcommand, string) {
 		}
 	case "delete", "remove", "rm":
 		return subcommandDelete, arg
+	case "pause", "stop":
+		return subcommandPause, arg
+	case "resume", "start":
+		return subcommandResume, arg
 	}
 
 	return subcommandCreate, rest
@@ -104,16 +118,31 @@ func (p *Plugin) ExecuteCommand(_ *plugin.Context, args *model.CommandArgs) (*mo
 
 	switch action {
 	case subcommandHelp:
-		return ephemeral(commandHelp), nil
+		return ephemeral(p.helpText(args.UserId)), nil
 	case subcommandList:
 		return ephemeral(p.listRemindersText(args.UserId)), nil
 	case subcommandDelete:
 		return ephemeral(p.deleteReminderText(args.UserId, arg)), nil
+	case subcommandPause:
+		return ephemeral(p.setPausedText(args.UserId, arg, true)), nil
+	case subcommandResume:
+		return ephemeral(p.setPausedText(args.UserId, arg, false)), nil
 	case subcommandCreate:
 		return ephemeral(p.createReminderText(args.UserId, arg)), nil
 	default:
-		return ephemeral(commandHelp), nil
+		return ephemeral(p.helpText(args.UserId)), nil
 	}
+}
+
+// helpText is the command help, with the reader's own timezone filled in so
+// they can see up front which clock their reminders will follow.
+func (p *Plugin) helpText(userID string) string {
+	timezone, err := p.userTimezone(userID)
+	if err != nil {
+		return commandHelp + "\n\nReminders arrive as a direct message, in your own timezone."
+	}
+
+	return fmt.Sprintf("%s\n\nReminders arrive as a direct message, in your own timezone (%s).", commandHelp, timezone)
 }
 
 // createReminderText parses the input, stores the reminder and queues it.
@@ -146,13 +175,14 @@ func (p *Plugin) createReminderText(userID, input string) string {
 
 	if err := p.kvstore.SaveReminder(r); err != nil {
 		if errors.Is(err, reminder.ErrTooManyReminders) {
-			return capitalise(reminder.ErrTooManyReminders.Error()) + " Delete one with `/recurring delete <id>` first."
+			return capitalise(reminder.ErrTooManyReminders.Error()) +
+				". Delete one with `/recurring delete <id>`, then try again."
 		}
 		p.client.Log.Error("Failed to save a reminder", "user_id", userID, "err", err)
 		return "Something went wrong saving that reminder. Please try again."
 	}
 
-	return fmt.Sprintf("Got it — I'll remind you **%s** %s.\nNext: **%s**. ID `%s`.",
+	return fmt.Sprintf("Got it — I'll remind you **%s** %s.\nNext: **%s**\nTo cancel: `/recurring delete %s`",
 		r.Message, r.Schedule.Describe(), p.formatRunAt(r), r.ID)
 }
 
@@ -165,20 +195,25 @@ func (p *Plugin) listRemindersText(userID string) string {
 	}
 
 	if len(reminders) == 0 {
-		return "You have no reminders. Try `/recurring help` for examples."
+		return "You have no reminders yet. Create one like this:\n" +
+			"`/recurring every monday at 10:00 weekly report`\n" +
+			"More examples: `/recurring help`"
 	}
 
+	// Rendered as a list rather than a table: a table needs an ID column wide
+	// enough for a 16 character string, and any real reminder text pushes it
+	// past the width of a channel on a phone.
 	var b strings.Builder
-	b.WriteString("| | Reminder | Schedule | Next | ID |\n|---|---|---|---|---|\n")
+	fmt.Fprintf(&b, "**Your reminders** (%d)\n", len(reminders))
 
-	for _, r := range reminders {
-		state, next := "", p.formatRunAt(r)
-		if r.Completed {
-			state, next = ":white_check_mark:", "—"
+	for i, r := range reminders {
+		state := ""
+		if r.Paused {
+			state = " _(paused)_"
 		}
 
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | `%s` |\n",
-			state, escapeTableCell(r.Message), r.Schedule.Describe(), next, r.ID)
+		fmt.Fprintf(&b, "\n**%d.** %s%s\n%s · next %s\n`/recurring delete %s`\n",
+			i+1, escapeInline(r.Message), state, r.Schedule.Describe(), p.formatRunAt(r), r.ID)
 	}
 
 	return b.String()
@@ -187,7 +222,7 @@ func (p *Plugin) listRemindersText(userID string) string {
 // deleteReminderText removes one reminder.
 func (p *Plugin) deleteReminderText(userID, reminderID string) string {
 	if reminderID == "" {
-		return "Which one? Use `/recurring list` to see the IDs, then `/recurring delete <id>`."
+		return "Which one? Use `/recurring list` to see your reminders — each one comes with the command to remove it."
 	}
 
 	r, err := p.kvstore.GetReminder(userID, reminderID)
@@ -205,6 +240,54 @@ func (p *Plugin) deleteReminderText(userID, reminderID string) string {
 	}
 
 	return fmt.Sprintf("Deleted **%s**.", r.Message)
+}
+
+// setPausedText pauses or resumes a reminder.
+func (p *Plugin) setPausedText(userID, reminderID string, paused bool) string {
+	verb := "resume"
+	if paused {
+		verb = "pause"
+	}
+
+	if reminderID == "" {
+		return fmt.Sprintf("Which one? Use `/recurring list` to see your reminders, then `/recurring %s <id>`.", verb)
+	}
+
+	r, err := p.kvstore.GetReminder(userID, reminderID)
+	if err != nil {
+		if errors.Is(err, reminder.ErrNotFound) {
+			return fmt.Sprintf("No reminder with ID `%s`. Use `/recurring list` to see yours.", reminderID)
+		}
+		p.client.Log.Error("Failed to look up a reminder", "user_id", userID, "err", err)
+		return "Something went wrong. Please try again."
+	}
+
+	if r.Paused == paused {
+		if paused {
+			return fmt.Sprintf("**%s** is already paused. Resume it with `/recurring resume %s`.", escapeInline(r.Message), r.ID)
+		}
+		return fmt.Sprintf("**%s** is already running. Next: **%s**", escapeInline(r.Message), p.formatRunAt(r))
+	}
+
+	now := time.Now()
+	r.Paused = paused
+	r.UpdatedAt = now.UnixMilli()
+
+	if !paused {
+		// Its next run is in the past by now, so work out the following one.
+		r.Advance(now)
+	}
+
+	if err := p.kvstore.UpdateReminder(r); err != nil {
+		p.client.Log.Error("Failed to pause or resume a reminder", "user_id", userID, "reminder_id", reminderID, "err", err)
+		return "Something went wrong. Please try again."
+	}
+
+	if paused {
+		return fmt.Sprintf("Paused **%s**. Resume it with `/recurring resume %s`.", escapeInline(r.Message), r.ID)
+	}
+
+	return fmt.Sprintf("Resumed **%s**. Next: **%s**", escapeInline(r.Message), p.formatRunAt(r))
 }
 
 // userTimezone returns the IANA timezone the user has set in Mattermost.
@@ -227,12 +310,46 @@ func (p *Plugin) userTimezone(userID string) (string, error) {
 }
 
 // formatRunAt renders a reminder's next firing in its own timezone.
+//
+// Near dates are named rather than dated: "Today at 09:00" is read faster than
+// "Thu, 4 Sep at 09:00", and the next firing is usually near. The zone
+// abbreviation always stays — it is how a user spots that a reminder is an hour
+// off after a daylight-saving change.
 func (p *Plugin) formatRunAt(r *reminder.Reminder) string {
+	if r.Paused {
+		return "paused"
+	}
 	if r.NextRunAt == 0 {
-		return "—"
+		return "never again"
 	}
 
-	return time.UnixMilli(r.NextRunAt).In(r.Location()).Format("Mon 2 Jan 15:04 MST")
+	loc := r.Location()
+	next := time.UnixMilli(r.NextRunAt).In(loc)
+	clock := next.Format("15:04 MST")
+
+	today := time.Now().In(loc)
+	daysAway := daysBetween(today, next)
+
+	switch {
+	case daysAway == 0:
+		return "Today at " + clock
+	case daysAway == 1:
+		return "Tomorrow at " + clock
+	case daysAway < 7:
+		return next.Format("Monday") + " at " + clock
+	case next.Year() == today.Year():
+		return next.Format("Mon, 2 Jan") + " at " + clock
+	default:
+		return next.Format("Mon, 2 Jan 2006") + " at " + clock
+	}
+}
+
+// daysBetween counts calendar days from one local time to another.
+func daysBetween(from, to time.Time) int {
+	fromDay := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, time.UTC)
+	toDay := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, time.UTC)
+
+	return int(toDay.Sub(fromDay).Hours() / 24)
 }
 
 func ephemeral(text string) *model.CommandResponse {
@@ -242,10 +359,11 @@ func ephemeral(text string) *model.CommandResponse {
 	}
 }
 
-// escapeTableCell keeps a message from breaking out of the markdown table it is
-// rendered in: a pipe would start a new column and a newline a new row.
-func escapeTableCell(s string) string {
-	s = strings.ReplaceAll(s, "|", `\|`)
+// escapeInline flattens a message onto one line so a reminder containing
+// newlines cannot break the surrounding list.
+func escapeInline(s string) string {
+	// CRLF first, so a Windows line ending collapses to one space rather than two.
+	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\r", " ")
 

@@ -1,7 +1,7 @@
 {
     "id": "com.github.kpab.recurring",
     "name": "Recurring Reminders",
-    "description": "Schedule recurring reminders in Mattermost — every weekday at 9am, every Monday at 10:00, and more.",
+    "description": "Reminders that repeat. Mattermost's built-in reminder fires once — these keep going, every day, weekday, week, or month.",
     "homepage_url": "https://github.com/kpab/mattermost-plugin-recurring",
     "support_url": "https://github.com/kpab/mattermost-plugin-recurring/issues",
     "icon_path": "assets/icon.svg",

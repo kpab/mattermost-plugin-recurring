@@ -135,9 +135,14 @@ type Reminder struct {
 	// scheduled to fire again.
 	NextRunAt int64 `json:"next_run_at"`
 
-	// Completed marks a reminder the user has ticked off. A completed
-	// recurring reminder stops firing but is kept until deleted.
-	Completed bool `json:"completed"`
+	// Paused stops a reminder firing without deleting it.
+	//
+	// This deliberately is not a "completed" flag. Ticking off a repeating
+	// reminder has no defined meaning — the user cannot tell whether they are
+	// dismissing today's occurrence or retiring the whole rule — and the two
+	// readings differ by "does this ever fire again". Pausing says exactly one
+	// thing, and resuming undoes it.
+	Paused bool `json:"paused"`
 
 	// FailureCount counts consecutive delivery failures. A reminder addressed
 	// to someone who can no longer receive it would otherwise be retried
@@ -178,7 +183,7 @@ func (r *Reminder) Validate() error {
 
 // Due reports whether the reminder should be delivered now.
 func (r *Reminder) Due(now time.Time) bool {
-	return !r.Completed && r.NextRunAt > 0 && r.NextRunAt <= now.UnixMilli()
+	return !r.Paused && r.NextRunAt > 0 && r.NextRunAt <= now.UnixMilli()
 }
 
 // Location resolves the reminder's timezone, falling back to UTC when the name

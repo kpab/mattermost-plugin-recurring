@@ -311,3 +311,76 @@ func TestParseRecurringCountsMessageLengthInRunes(t *testing.T) {
 	_, _, err = ParseRecurring("毎日 9:00 " + tooLong)
 	assert.Error(t, err)
 }
+
+// A trailing am/pm after a 24-hour style time used to be left behind: "9:00am x"
+// put "am" at the head of the message, and "9:00pm x" silently meant 09:00
+// rather than 21:00 — the wrong time, with no error to show for it.
+func TestParseRecurringHandlesMeridiemAfterColonTime(t *testing.T) {
+	tests := map[string]struct {
+		input       string
+		wantHour    int
+		wantMinute  int
+		wantMessage string
+	}{
+		"am attached":     {"every day at 9:00am brush teeth", 9, 0, "brush teeth"},
+		"am spaced":       {"every day at 9:00 am brush teeth", 9, 0, "brush teeth"},
+		"pm attached":     {"daily 9:00pm wind down", 21, 0, "wind down"},
+		"pm with minutes": {"daily 6:30pm gym", 18, 30, "gym"},
+		"noon":            {"daily 12:00pm lunch", 12, 0, "lunch"},
+		"midnight":        {"daily 12:00am backup", 0, 0, "backup"},
+		"uppercase":       {"daily 9:00PM wind down", 21, 0, "wind down"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			schedule, message, err := ParseRecurring(tc.input)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantHour, schedule.At.Hour)
+			assert.Equal(t, tc.wantMinute, schedule.At.Minute)
+			assert.Equal(t, tc.wantMessage, message)
+		})
+	}
+}
+
+// A bare hour is accepted after an explicit "at", which is how people write it.
+func TestParseRecurringAcceptsBareHourAfterAt(t *testing.T) {
+	schedule, message, err := ParseRecurring("every day at 9 stand-up")
+	require.NoError(t, err)
+	assert.Equal(t, 9, schedule.At.Hour)
+	assert.Equal(t, 0, schedule.At.Minute)
+	assert.Equal(t, "stand-up", message)
+
+	schedule, message, err = ParseRecurring("every monday at 10 weekly report")
+	require.NoError(t, err)
+	assert.Equal(t, 10, schedule.At.Hour)
+	assert.Equal(t, "weekly report", message)
+}
+
+// Without an "at" the leading number belongs to the message, not the clock.
+func TestParseRecurringDoesNotEatALeadingNumberAsTheHour(t *testing.T) {
+	_, _, err := ParseRecurring("every day 3 coffees")
+	assert.ErrorIs(t, err, ErrNoTime)
+}
+
+func TestParseRecurringRejectsImpossibleMeridiemHour(t *testing.T) {
+	for _, input := range []string{"daily 13pm nope", "daily 0am nope", "daily 13:00pm nope"} {
+		t.Run(input, func(t *testing.T) {
+			_, _, err := ParseRecurring(input)
+			assert.Error(t, err)
+		})
+	}
+}
+
+// Every parse error has to name what is missing and show something that works,
+// because a failed reminder is how most people meet this plugin.
+func TestParseErrorsShowAWorkingExample(t *testing.T) {
+	for name, err := range map[string]error{
+		"no schedule": ErrNoSchedule,
+		"no time":     ErrNoTime,
+		"no message":  ErrNoMessage,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Contains(t, err.Error(), "`", "error should quote an example the user can copy")
+		})
+	}
+}

@@ -2,8 +2,12 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/kpab/mattermost-plugin-recurring/server/reminder"
 )
 
 func TestParseCommand(t *testing.T) {
@@ -26,6 +30,18 @@ func TestParseCommand(t *testing.T) {
 		},
 		"delete without id": {
 			raw: "/recurring delete", wantAction: subcommandDelete,
+		},
+		"pause": {
+			raw: "/recurring pause abc123", wantAction: subcommandPause, wantArg: "abc123",
+		},
+		"resume": {
+			raw: "/recurring resume abc123", wantAction: subcommandResume, wantArg: "abc123",
+		},
+		"stop is an alias for pause": {
+			raw: "/recurring stop abc123", wantAction: subcommandPause, wantArg: "abc123",
+		},
+		"start is an alias for resume": {
+			raw: "/recurring start abc123", wantAction: subcommandResume, wantArg: "abc123",
 		},
 		"remove is an alias for delete": {
 			raw: "/recurring remove abc123", wantAction: subcommandDelete, wantArg: "abc123",
@@ -69,12 +85,11 @@ func TestParseCommand(t *testing.T) {
 	}
 }
 
-func TestEscapeTableCell(t *testing.T) {
-	// A pipe would split the markdown table into another column, a newline
-	// into another row.
-	assert.Equal(t, `a \| b`, escapeTableCell("a | b"))
-	assert.Equal(t, "a b", escapeTableCell("a\nb"))
-	assert.Equal(t, "nothing to escape", escapeTableCell("nothing to escape"))
+func TestEscapeInline(t *testing.T) {
+	// A newline in the message would otherwise break the surrounding list.
+	assert.Equal(t, "a b", escapeInline("a\nb"))
+	assert.Equal(t, "a b", escapeInline("a\r\nb"))
+	assert.Equal(t, "nothing to escape", escapeInline("nothing to escape"))
 }
 
 func TestCapitalise(t *testing.T) {
@@ -83,4 +98,48 @@ func TestCapitalise(t *testing.T) {
 	assert.Equal(t, "Already capital", capitalise("Already capital"))
 	// Must not corrupt a multi-byte first character.
 	assert.Equal(t, "毎日のリマインダー", capitalise("毎日のリマインダー"))
+}
+
+func TestFormatRunAt(t *testing.T) {
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	require.NoError(t, err)
+
+	p := &Plugin{}
+	now := time.Now().In(tokyo)
+
+	at := func(d time.Duration) *reminder.Reminder {
+		return &reminder.Reminder{
+			Timezone:  "Asia/Tokyo",
+			NextRunAt: now.Add(d).UnixMilli(),
+		}
+	}
+
+	t.Run("a paused reminder has no next run to show", func(t *testing.T) {
+		r := at(48 * time.Hour)
+		r.Paused = true
+
+		assert.Equal(t, "paused", p.formatRunAt(r),
+			"showing a next run for a paused reminder contradicts the pause")
+	})
+
+	t.Run("a spent reminder says so", func(t *testing.T) {
+		assert.Equal(t, "never again", p.formatRunAt(&reminder.Reminder{Timezone: "Asia/Tokyo"}))
+	})
+
+	t.Run("near dates are named", func(t *testing.T) {
+		// Anchored to noon so adding hours cannot roll over a day boundary.
+		noon := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, tokyo)
+		p := &Plugin{}
+
+		today := &reminder.Reminder{Timezone: "Asia/Tokyo", NextRunAt: noon.Add(time.Hour).UnixMilli()}
+		assert.Contains(t, p.formatRunAt(today), "Today at")
+
+		tomorrow := &reminder.Reminder{Timezone: "Asia/Tokyo", NextRunAt: noon.AddDate(0, 0, 1).UnixMilli()}
+		assert.Contains(t, p.formatRunAt(tomorrow), "Tomorrow at")
+	})
+
+	t.Run("the timezone is always shown", func(t *testing.T) {
+		// It is how a user notices a reminder drifted across a DST change.
+		assert.Contains(t, p.formatRunAt(at(3*time.Hour)), "JST")
+	})
 }

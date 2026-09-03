@@ -215,17 +215,17 @@ func TestDeliverDueRemindersSkipsNotYetDue(t *testing.T) {
 	assert.Empty(t, tp.sent)
 }
 
-func TestDeliverDueRemindersSkipsCompleted(t *testing.T) {
+func TestDeliverDueRemindersSkipsPaused(t *testing.T) {
 	tp := newTestPlugin(t)
 
 	now := time.Now()
 	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 9}, now.Add(-time.Hour).UnixMilli())
-	r.Completed = true
+	r.Paused = true
 	require.NoError(t, tp.store.SaveReminder(r))
 
 	tp.deliverDue(now)
 
-	assert.Empty(t, tp.sent, "a completed reminder must not fire")
+	assert.Empty(t, tp.sent, "a paused reminder must not fire")
 }
 
 // Missing several occurrences while the server was down must produce one

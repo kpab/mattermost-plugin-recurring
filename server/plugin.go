@@ -59,9 +59,11 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	botUserID, err := p.client.Bot.EnsureBot(&model.Bot{
-		Username:    "recurring",
+		// "recurring" alone reads as an adjective with its noun missing when it
+		// turns up in a DM list.
+		Username:    "recurring-reminders",
 		DisplayName: "Recurring Reminders",
-		Description: "Delivers your recurring reminders.",
+		Description: "Delivers your repeating reminders. Type /recurring to set one up, or /recurring list to see them.",
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to ensure the reminder bot")
