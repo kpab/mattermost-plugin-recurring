@@ -1,7 +1,6 @@
 package main
 
 import (
-	"net/http"
 	"sync"
 
 	"github.com/gorilla/mux"
@@ -11,7 +10,6 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"github.com/pkg/errors"
 
-	"github.com/kpab/mattermost-plugin-recurring/server/command"
 	"github.com/kpab/mattermost-plugin-recurring/server/store/kvstore"
 )
 
@@ -24,9 +22,6 @@ type Plugin struct {
 
 	// client is the Mattermost server API client.
 	client *pluginapi.Client
-
-	// commandClient is the client used to register and execute slash commands.
-	commandClient command.Command
 
 	// router is the HTTP router for handling API requests.
 	router *mux.Router
@@ -51,9 +46,11 @@ func (p *Plugin) OnActivate() error {
 
 	p.kvstore = kvstore.NewKVStore(p.client)
 
-	p.commandClient = command.NewCommandHandler(p.client)
-
 	p.router = p.initRouter()
+
+	if err := p.registerCommand(); err != nil {
+		return err
+	}
 
 	botUserID, err := p.client.Bot.EnsureBot(&model.Bot{
 		Username:    "recurring",
@@ -70,15 +67,6 @@ func (p *Plugin) OnActivate() error {
 	}
 
 	return nil
-}
-
-// This will execute the commands that were registered in the NewCommandHandler function.
-func (p *Plugin) ExecuteCommand(c *plugin.Context, args *model.CommandArgs) (*model.CommandResponse, *model.AppError) {
-	response, err := p.commandClient.Handle(args)
-	if err != nil {
-		return nil, model.NewAppError("ExecuteCommand", "plugin.command.execute_command.app_error", nil, err.Error(), http.StatusInternalServerError)
-	}
-	return response, nil
 }
 
 // See https://developers.mattermost.com/extend/plugins/server/reference/

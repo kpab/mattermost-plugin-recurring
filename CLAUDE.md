@@ -18,10 +18,14 @@ Mattermost 公式の plugin starter template がベース。
 
 ```
 server/                 Go サーバー側
-  plugin.go             OnActivate 等のフック。ここでスケジューラを起動する
-  job.go                定期実行のエントリポイント
+  plugin.go             OnActivate 等のフック。ボット確保とスケジューラ起動
+  scheduler.go          JobOnceScheduler の配線。発火 → DM → 次回を再予約
+  command.go            スラッシュコマンド /recurring
   api.go                ServeHTTP。/plugins/com.github.kpab.recurring/api/v1/ 配下
-  command/              スラッシュコマンド
+  reminder/             ドメイン。Mattermost に依存させない
+    reminder.go         Reminder / Schedule 型と検証
+    schedule.go         次回発火時刻の計算
+    parse.go            日英の自然語パーサー
   store/kvstore/        KV Store のラッパー。永続化は全部ここを通す
 webapp/                 React + TypeScript。RHS はここに登録する
   src/                  実装
@@ -40,7 +44,6 @@ make check-style   # lint
 make deploy        # ビルドして稼働中のサーバーへインストール
 make watch         # deploy 後、webapp の変更を自動で再デプロイ
 make logs          # プラグインのサーバーログを追う
-make mock          # command のモックを再生成
 ```
 
 `make deploy` は環境変数で対象サーバーを指定する。mm.w4ta.com は MFA 強制のため
