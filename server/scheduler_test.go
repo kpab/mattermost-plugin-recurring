@@ -353,3 +353,33 @@ func TestReminderIDIsKeySafe(t *testing.T) {
 	assert.NotContains(t, id, "/")
 	assert.LessOrEqual(t, len("reminders-")+len(model.NewId()), kvKeyLimit)
 }
+
+// The delivered message has to say which reminder fired and when it comes round
+// again, and has to say the latter the same way /recurring list does — the two
+// drifted apart once, when this built its own timestamp.
+func TestReminderMessage(t *testing.T) {
+	tp := newTestPlugin(t)
+	tokyo, err := time.LoadLocation("Asia/Tokyo")
+	require.NoError(t, err)
+
+	// Firing today at 22:10, so the next one is tomorrow.
+	now := time.Date(2026, time.September, 3, 22, 10, 30, 0, tokyo)
+	r := testReminder("user1", "r1", reminder.TimeOfDay{Hour: 22, Minute: 10},
+		time.Date(2026, time.September, 3, 22, 10, 0, 0, tokyo).UnixMilli())
+	r.Message = "発火テスト"
+
+	got := tp.reminderMessage(r, now)
+
+	assert.Contains(t, got, "発火テスト", "the message must say what fired")
+	assert.Contains(t, got, "every day at 22:10", "the message must say how often")
+
+	// The exact rendering comes from formatRunAt, so compare against it rather
+	// than hard-coding a format that could drift.
+	preview := r.Clone()
+	next, ok := r.NextRun(now)
+	require.True(t, ok)
+	preview.NextRunAt = next.UnixMilli()
+
+	assert.Contains(t, got, "next "+tp.formatRunAt(preview),
+		"the next run must read exactly as it does in /recurring list")
+}

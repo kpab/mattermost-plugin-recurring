@@ -139,13 +139,8 @@ func (p *Plugin) deliverReminder(r *reminder.Reminder, now time.Time) {
 // from a bot, a reminder gives the reader no way to tell which of their
 // reminders fired or when it will come round again.
 func (p *Plugin) sendReminder(r *reminder.Reminder) error {
-	detail := r.Schedule.Describe()
-	if next, ok := r.NextRun(time.Now()); ok {
-		detail += " · next " + next.Format("Mon, 2 Jan 15:04 MST")
-	}
-
 	post := &model.Post{
-		Message: fmt.Sprintf("⏰ **%s**\n_%s_", r.Message, detail),
+		Message: p.reminderMessage(r, time.Now()),
 	}
 
 	// The message is the user's own text echoed back to them in their own DM,
@@ -158,4 +153,25 @@ func (p *Plugin) sendReminder(r *reminder.Reminder) error {
 	}
 
 	return nil
+}
+
+// reminderMessage builds the delivered message.
+//
+// The schedule and the following run are repeated under the text: arriving as a
+// bare line from a bot, a reminder gives the reader no way to tell which of
+// their reminders fired or when it comes round again. The next run goes through
+// formatRunAt so that it reads the same here as in /recurring list — the two
+// drifted apart once, when this built its own timestamp.
+func (p *Plugin) reminderMessage(r *reminder.Reminder, now time.Time) string {
+	detail := r.Schedule.Describe()
+
+	// r still carries the run that is firing now, so the preview needs the one
+	// after it.
+	if next, ok := r.NextRun(now); ok {
+		preview := r.Clone()
+		preview.NextRunAt = next.UnixMilli()
+		detail += " · next " + p.formatRunAt(preview)
+	}
+
+	return fmt.Sprintf("⏰ **%s**\n_%s_", r.Message, detail)
 }
