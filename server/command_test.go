@@ -129,7 +129,6 @@ func TestFormatRunAt(t *testing.T) {
 	t.Run("near dates are named", func(t *testing.T) {
 		// Anchored to noon so adding hours cannot roll over a day boundary.
 		noon := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, tokyo)
-		p := &Plugin{}
 
 		today := &reminder.Reminder{Timezone: "Asia/Tokyo", NextRunAt: noon.Add(time.Hour).UnixMilli()}
 		assert.Contains(t, p.formatRunAt(today), "Today at")

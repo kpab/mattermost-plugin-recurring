@@ -23,12 +23,12 @@ var (
 	// ErrNoSchedule is returned when the input does not begin with something
 	// that looks like a schedule.
 	ErrNoSchedule = errors.New(
-		"I couldn't tell how often to repeat this. Put the repeat first, then the time, then the message — like `every monday at 10:00 weekly report`")
+		"couldn't work out how often to repeat this. Put the repeat first, then the time, then the message — like `every monday at 10:00 weekly report`")
 
 	// ErrNoTime is returned when the repeat was understood but no time of day
 	// followed it.
 	ErrNoTime = errors.New(
-		"I understood the repeat, but not the time. Add one like `10:00`, `9am` or `18:30`")
+		"the repeat is clear, but not the time. Add one like `10:00`, `9am` or `18:30`")
 
 	// ErrNoMessage is returned when a schedule was understood but nothing was
 	// left to remind the user about.
