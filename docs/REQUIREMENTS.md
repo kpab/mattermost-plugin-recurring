@@ -44,7 +44,7 @@ Marketplace 上の実質的な空席を、繰り返しに特化した小さく�
 
 | 項目 | 選定 | 理由 |
 |------|------|------|
-| サーバー | Go 1.24 + mattermost/server/public/pluginapi | Mattermost プラグインの標準構成。他に選択肢がない |
+| サーバー | Go 1.25 + mattermost/server/public/pluginapi | Mattermost プラグインの標準構成。他に選択肢がない |
 | スケジューラ | `pluginapi/cluster.JobOnceScheduler` | クラスタセーフ(複数インスタンスでも1回だけ発火)、KV に永続化され再起動後も復元される |
 | 繰り返しの実現 | 発火時に次回時刻を計算して `ScheduleOnce` を再予約する自己再帰方式 | `cluster.Schedule` は固定インターバル専用で「毎週月曜10時」を表現できないため |
 | フロントエンド | React + TypeScript (webapp プラグイン) | Mattermost の webapp プラグインは React 前提。RHS 登録も React コンポーネント |

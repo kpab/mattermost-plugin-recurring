@@ -7,7 +7,7 @@ Mattermost に繰り返しリマインダー(「毎週月曜10時」など)を�
 
 ## 技術スタック
 
-- サーバー: Go 1.24 / `github.com/mattermost/mattermost/server/public/pluginapi`
+- サーバー: Go 1.25 / `github.com/mattermost/mattermost/server/public/pluginapi`
 - webapp: React + TypeScript
 - 永続化: プラグイン KV Store のみ(独自テーブルは作らない)
 - plugin id: `com.github.kpab.recurring` / ライセンス Apache-2.0

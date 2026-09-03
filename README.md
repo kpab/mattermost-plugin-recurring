@@ -37,7 +37,7 @@ Plugin uploads must be enabled on the server (`PluginSettings.EnableUploads`).
 
 ## Development
 
-Requires Go 1.24+ and the Node version in [`.nvmrc`](.nvmrc) (`nvm i` to install it).
+Requires Go 1.25+ and the Node version in [`.nvmrc`](.nvmrc) (`nvm i` to install it).
 
 ```sh
 make dist          # build the plugin bundle
