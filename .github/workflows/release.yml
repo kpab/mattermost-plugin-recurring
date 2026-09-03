@@ -56,18 +56,30 @@ jobs:
           set -euo pipefail
           bundle=$(ls dist/*.tar.gz)
           echo "checking $bundle"
-          for arch in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64.exe; do
-            if ! tar -tzf "$bundle" | grep -q "server/dist/plugin-$arch$"; then
-              echo "::error::bundle is missing server/dist/plugin-$arch"
-              exit 1
-            fi
-            echo "  ok: $arch"
+
+          # Listed once into a variable rather than piped per check: `tar | grep -q`
+          # makes tar die of SIGPIPE when grep exits early, and under pipefail
+          # that reads as "the file is missing" for a bundle that is perfectly fine.
+          contents=$(tar -tzf "$bundle")
+
+          for entry in \
+            server/dist/plugin-linux-amd64 \
+            server/dist/plugin-linux-arm64 \
+            server/dist/plugin-darwin-amd64 \
+            server/dist/plugin-darwin-arm64 \
+            server/dist/plugin-windows-amd64.exe \
+            webapp/dist/main.js
+          do
+            case "$contents" in
+              *"$entry"*) echo "  ok: $entry" ;;
+              *)
+                echo "::error::bundle is missing $entry"
+                echo "bundle contains:"
+                echo "$contents"
+                exit 1
+                ;;
+            esac
           done
-          tar -tzf "$bundle" | grep -q "webapp/dist/main.js$" || {
-            echo "::error::bundle is missing the webapp bundle"
-            exit 1
-          }
-          echo "  ok: webapp"
 
       - name: Publish the release
         uses: softprops/action-gh-release@v2
